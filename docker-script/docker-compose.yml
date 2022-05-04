@@ -5,7 +5,7 @@ version: "3.8"
 services:
   # 時間足の過去データなどなどを入れるデータベースコンテナ
   timescaledb:
-    image: timescale/timescaledb:latest-pg12
+    image: timescale/timescaledb:latest-pg14
     container_name: timescaledb
     restart: always 
     ports:
@@ -27,9 +27,8 @@ services:
     build:
       context: ./jupyter
       args:
-        - GIT_ACCESSTOKEN=${GIT_ACCESSTOKEN} # GIT_ACCSESTOKENは事前にシステム環境変数として設定しておく
-        - GIT_USER=${GIT_USER}
-        - GIT_EMAIL=${GIT_EMAIL}
+        - GIT_USER=${GIT_USER} # GIT_USERは事前にユーザー環境変数として設定しておく
+        - GIT_EMAIL=${GIT_EMAIL} # GIT_EMAILは事前にユーザー環境変数として設定しておく
     image: jupyter-image
     container_name: jupyter
     restart: always
@@ -47,11 +46,28 @@ services:
       - BINANCE_TESTNET_APIKEY=${BINANCE_TESTNET_APIKEY} # BINANCE_TESTNET_APIKEYは事前にユーザー環境変数として設定しておく
       - BINANCE_TESTNET_APISECRET=${BINANCE_TESTNET_APISECRET} # BINANCE_TESTNET_APISECRETは事前にユーザー環境変数として設定しておく
       - DISCORD_WEBHOOK=${DISCORD_WEBHOOK} # DISCORD_WEBHOOKは事前にユーザー環境変数として設定しておく
+      - GIT_ACCESSTOKEN=${GIT_ACCESSTOKEN} # GIT_ACCSESTOKENは事前にユーザー環境変数として設定しておく
+      - GIT_USER=${GIT_USER} # GIT_USERは事前にユーザー環境変数として設定しておく
+      - GIT_EMAIL=${GIT_EMAIL} # GIT_EMAILは事前にユーザー環境変数として設定しておく
     env_file:
       - .env
     command: start-notebook.sh --NotebookApp.token='wannabebotter' --NotebookApp.notebook_dir='/home/jovyan/work'
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: always 
+    ports:
+      - "8889:8000"
+    volumes:
+      - pgadmin_volume:/var/lib/pgadmin
+    environment:
+      - PGADMIN_LISTEN_PORT=8000
+      - PGADMIN_DEFAULT_EMAIL=wannabebotter@wannabebotter.com
+      - PGADMIN_DEFAULT_PASSWORD=wannabebotter
 
 # 各コンテナが利用するディスクスペースの宣言
 volumes:
   timescaledb_volume:
   jupyter_volume:
+  pgadmin_volume:
