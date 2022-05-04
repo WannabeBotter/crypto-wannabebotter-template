@@ -1,0 +1,9 @@
+build-essential
+python-dev
+libpq-dev
+curl
+cmake
+libssl-dev
+pkg-config
+graphviz
+parallel
