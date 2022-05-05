@@ -8,6 +8,26 @@ class AsyncManager(ABC):
     # 非同期タスクを中断するためのフラグ
     _abort_async: bool = False
 
+    # 全ての派生クラスで共有されるロガー
+    _logger: Logger = None
+
+    @classmethod
+    def set_logger(cls, logger: Logger = None) -> None:
+        """
+        AsyncManagerのロガー設定メソッド
+        
+        Parameters
+        ----------
+        logger : Logger
+            (必須) ロガー
+
+        Returns
+        -------
+        なし。失敗した場合は例外をRaiseする。
+        """
+        assert logger is not None
+        cls._logger = logger        
+
     @classmethod
     @abstractmethod
     async def init_async(cls, params: dict = None, logger: Logger = None) -> None:
