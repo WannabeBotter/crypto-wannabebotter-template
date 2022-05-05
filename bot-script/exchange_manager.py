@@ -53,7 +53,7 @@ class ExchangeManager(AsyncManager):
         'rp': ('realized_profit', 'NUMERIC', 'NOT NULL')
     }
 
-    def __init__(self, params: dict = None, logger: Logger = None):
+    def __init__(self, params: dict = None):
         """
         ExchangeManagerコンストラクタ
         
@@ -69,8 +69,6 @@ class ExchangeManager(AsyncManager):
             (必須) PyBotters.Clientのインスタンス
         params['ws_baseurl'] : str
             (必須) WebsocketAPIのベースURL
-        logger : Logger
-            ロガー
 
         Returns
         -------
@@ -81,7 +79,6 @@ class ExchangeManager(AsyncManager):
         assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
-        self._logger: Logger = logger
         self._exchange_name: str = params['exchange_name']
         self._timebar_interval: timedelta = params['timebar_interval']
         self._client: pybotters.Client = params['client']
@@ -110,7 +107,7 @@ class ExchangeManager(AsyncManager):
         self._datastore = pybotters.BinanceDataStore()
 
     @classmethod
-    async def init_async(cls, params: dict = None, logger: Logger = None) -> None:
+    async def init_async(cls, params: dict = None) -> None:
         """
         ExchangeManagerのインスタンスを作成し、初期化する関数
         
@@ -126,8 +123,6 @@ class ExchangeManager(AsyncManager):
             (必須) PyBotters.Clientのインスタンス
         params['ws_baseurl'] : str
             (必須) WebsocketAPIのベースURL
-        logger : Logger
-            ロガー
 
         Returns
         -------
@@ -140,10 +135,10 @@ class ExchangeManager(AsyncManager):
         assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
-        if logger is not None:
-            logger.debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
 
-        ExchangeManager._instance = ExchangeManager(params, logger)
+        ExchangeManager._instance = ExchangeManager(params)
 
         # ログ用のテーブルとDBを初期化する
         ExchangeManager._init_order_log_table()
@@ -208,12 +203,12 @@ class ExchangeManager(AsyncManager):
                     break
                 else:
                     # 200以外は1秒待ってリトライ
-                    if _instance._logger:
-                        _instance._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Non 200 status {_r.status}')
+                    if AsyncManager._logger:
+                        AsyncManager._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Non 200 status {_r.status}')
                     await asyncio.sleep(1.0)
             except BaseException as e:
-                if _instance._logger:
-                    _instance._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Exception {e}')
+                if AsyncManager._logger:
+                    AsyncManager._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Exception {e}')
                 await asyncio.sleep(1.0)
 
         _instance._exchange_info = await _r.json()
@@ -276,17 +271,17 @@ class ExchangeManager(AsyncManager):
                         break
                     else:
                         # 200以外は1秒待ってリトライ
-                        if _instance._logger:
-                            _instance._logger.warning(f'ExchangeManager.update_position_async() : Retry. Non 200 status {_r.status}')
+                        if AsyncManager._logger:
+                            AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. Non 200 status {_r.status}')
                         await asyncio.sleep(1.0)
                 else:
                     # APIを呼び出しすぎている
-                    if _instance._logger:
-                        _instance._logger.warning(f'ExchangeManager.update_position_async() : Retry. API weight shortage.')
+                    if AsyncManager._logger:
+                        AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. API weight shortage.')
                     await asyncio.sleep(1.0)
             except BaseException as e:
-                if _instance._logger:
-                    _instance._logger.warning(f'ExchangeManager.update_position_async() : Retry. Exception {e}')
+                if AsyncManager._logger:
+                    AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. Exception {e}')
                 await asyncio.sleep(1.0)
 
     @classmethod
@@ -309,8 +304,8 @@ class ExchangeManager(AsyncManager):
 
         while True:
             _events = await _instance._datastore.order.wait()
-            if _instance._logger:
-                _instance._logger.info(f'ExchangeManager._order_update_loop_async() : Pybotters datastore event received\n{_events}')
+            if AsyncManager._logger:
+                AsyncManager._logger.info(f'ExchangeManager._order_update_loop_async() : Pybotters datastore event received\n{_events}')
             for _event in _events:
                 TimescaleDBManager.log_order_update(_table_name, _event)
     
@@ -486,8 +481,8 @@ class ExchangeManager(AsyncManager):
         _close_index_set = set(_close_series.index.values)
 
         if len(_position_list) == 0:
-            if _instance._logger:
-                _instance._logger.warning(f'ExchangeManager.get_position() : Position data is not avalable yet. Abort.')
+            if AsyncManager._logger:
+                AsyncManager._logger.warning(f'ExchangeManager.get_position() : Position data is not avalable yet. Abort.')
             return None
         
         _position_dict = {}
@@ -542,7 +537,8 @@ class ExchangeManager(AsyncManager):
 
         _position_df = ExchangeManager.get_position_df()
         if _position_df is None:
-            _instance._logger.warning(f'ExchangeManager.print_position() : Position data is not avalable yet. Abort.')
+            if AsyncManager._logger:
+                AsyncManager._logger.warning(f'ExchangeManager.print_position() : Position data is not avalable yet. Abort.')
             return
 
         _cw_usdt_balance = ExchangeManager.get_usdt_cw_margin()
@@ -550,10 +546,10 @@ class ExchangeManager(AsyncManager):
         _total_abs_usdt_value = _position_df.loc[:, 'abs_usdt_value'].sum()
         _total_unrealized_pnl = _position_df.loc[:, 'unrealized_pnl'].sum()
 
-        if _instance._logger:
-            _instance._logger.info(f'ExchangeManager.print_position()')
-            _instance._logger.info(_position_df[_position_df['amount'] != 0])
-            _instance._logger.info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
+        if AsyncManager._logger:
+            AsyncManager._logger.info(f'ExchangeManager.print_position()')
+            AsyncManager._logger.info(_position_df[_position_df['amount'] != 0])
+            AsyncManager._logger.info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
     
     @classmethod
     def _init_order_log_table(cls, force = False):
@@ -578,8 +574,8 @@ class ExchangeManager(AsyncManager):
             TimescaleDBManager.init_database('log')
             _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", 'log')
         except Exception as e:
-            if _instance._logger:
-                _instance._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {_table_name}) : Table initialization failed. Exception {e}')
+            if AsyncManager._logger:
+                AsyncManager._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {_table_name}) : Table initialization failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
@@ -598,8 +594,8 @@ class ExchangeManager(AsyncManager):
         try:
             TimescaleDBManager.execute_sql(_sql, 'log')
         except Exception as e:
-            if _instance._logger:
-                _instance._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {table_name}) : Create table failed. Exception {e}')
+            if AsyncManager._logger:
+                AsyncManager._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {table_name}) : Create table failed. Exception {e}')
             raise(e)
 
     @classmethod
@@ -651,14 +647,23 @@ class ExchangeManager(AsyncManager):
         try:
             TimescaleDBManager.execute_sql(_sql)
         except Exception as e:
-            if _instance._logger:
-                _instance._logger.error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
+            if AsyncManager._logger:
+                AsyncManager._logger.error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
             raise(e)
 
 if __name__ == "__main__":
     # 簡易的なテストコード
     from os import environ
     from crypto_bot_config import pg_config, exchange_config, pybotters_apis
+    import logging
+    from logging import Logger, getLogger, basicConfig
+    from rich.logging import RichHandler
+
+    _richhandler = RichHandler(rich_tracebacks = True)
+    _richhandler.setFormatter(logging.Formatter('%(message)s'))
+    basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+    _logger: Logger = getLogger('rich')
+    AsyncManager.set_logger(_logger)
     
     async def test():
         async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
