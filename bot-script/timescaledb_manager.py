@@ -228,6 +228,15 @@ if __name__ == "__main__":
     from os import environ
     import asyncio
     from crypto_bot_config import pg_config
+    import logging
+    from logging import Logger, getLogger, basicConfig
+    from rich.logging import RichHandler
+
+    _richhandler = RichHandler(rich_tracebacks = True)
+    _richhandler.setFormatter(logging.Formatter('%(message)s'))
+    basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+    _logger: Logger = getLogger('rich')
+    AsyncManager.set_logger(_logger)
     
     async def test():
         await TimescaleDBManager.init_async(pg_config)

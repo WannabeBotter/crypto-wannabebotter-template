@@ -5,7 +5,6 @@ from logging import Logger
 from datetime import timedelta
 
 import pandas as pd
-from pexpect import ExceptionPexpect
 
 import pybotters
 
@@ -246,9 +245,8 @@ class ExchangeManager(AsyncManager):
     @classmethod
     async def update_position_async(cls) -> None:
         """
-        PyBottersのデータストア内で保持しているポジション情報を最新の状態に更新するメソッド
-        この関数はPyBotters本体の更新を必要とする。
-        models/binance.pyのPosition._onresponseに "up": item["unRealizedProfit"]を追加するか、Develop版を利用すること
+        PyBottersのデータストア内で保持しているポジション情報を最新の状態に更新するメソッド\n
+        PyBottersのmodels/binance.pyのPosition._onresponseに "up": item["unRealizedProfit"]を追加するか、Develop版を利用すること
         
         Parameters
         ----------
@@ -414,7 +412,7 @@ class ExchangeManager(AsyncManager):
                 if _symbol_str not in _instance._all_symbols:
                     _instance._all_symbols.add(_symbol_str)
         
-        return _instance._latest_mark_series
+        return _instance._latest_mark_series.copy()
 
     @classmethod
     def _get_latest_close(cls) -> pd.Series:
@@ -443,10 +441,11 @@ class ExchangeManager(AsyncManager):
         for _close in _close_list:
             _symbol_str = _close['s']
             if '_' not in _symbol_str and 'USDT' in _symbol_str:
-                _instance._latest_close_series[_symbol_str] = Decimal(_close['p'])
+                _instance._latest_close_series[_symbol_str] = Decimal(_close['c'])
                 if _symbol_str not in _instance._all_symbols:
                     _instance._all_symbols.add(_symbol_str)
-        return _instance._latest_close_series
+
+        return _instance._latest_close_series.copy()
 
     @classmethod
     def get_position_df(cls) -> pd.DataFrame:
@@ -667,7 +666,7 @@ if __name__ == "__main__":
     
     async def test():
         async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
-            exchange_params = {
+            _exchange_params = {
                 'exchange_name': exchange_config['exchange_name'],
                 'timebar_interval': timedelta(minutes = 5),
                 'client': _client,
@@ -675,11 +674,13 @@ if __name__ == "__main__":
             }
 
             await TimescaleDBManager.init_async(pg_config)
-            await ExchangeManager.init_async(exchange_params)
+            await ExchangeManager.init_async(_exchange_params)
             await ExchangeManager.run_async()
 
             # 60秒待って動作を確認する
             await asyncio.sleep(60.0)
+
+            ExchangeManager.print_positions()
     
     try:
         asyncio.run(test())
