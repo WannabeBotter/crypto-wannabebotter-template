@@ -526,7 +526,7 @@ class TimebarManager(AsyncManager):
                 break            
         
         # Kafkaにメッセージを送信する
-        await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'{symbol} : download completed')
+        await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'{symbol} : download completed'.encode('utf-8'))
         return _updated
     
     @classmethod
