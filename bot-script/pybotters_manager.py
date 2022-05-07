@@ -10,9 +10,6 @@ class PyBottersManager(AsyncManager):
     # PyBottersのインスタンスを保持するクラス変数
     _client: pybotters.Client = None
 
-    # このマネージャーが利用するデータベース名を保持するクラス変数
-    _database_name = 'PyBottersManager'
-
     client: pybotters.Client = None
 
     def __init__(self, params):
