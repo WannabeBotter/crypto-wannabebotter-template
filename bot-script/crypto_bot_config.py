@@ -1,4 +1,3 @@
-from datetime import timedelta
 from os import environ
 
 # TimescaleDBのパラメータ
