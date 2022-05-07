@@ -1,13 +1,10 @@
 from abc import abstractmethod, ABC
-from logging import Logger
+
+import logging
+from logging import Logger, getLogger, basicConfig
+from rich.logging import RichHandler
 
 class AsyncManager(ABC):
-    # インスタンスを保持するクラス変数
-    _instance: object = None
-
-    # 非同期タスクを中断するためのフラグ
-    _abort_async: bool = False
-
     # 全ての派生クラスで共有されるロガー
     _logger: Logger = None
 
@@ -66,7 +63,7 @@ class AsyncManager(ABC):
     
     @classmethod
     @abstractmethod
-    async def init_async(cls, params: dict = None, logger: Logger = None) -> None:
+    async def init_async(cls) -> None:
         """
         AsyncManagerの初期化用抽象メソッド
         
@@ -78,7 +75,11 @@ class AsyncManager(ABC):
         -------
         なし。失敗した場合は例外をRaiseする。
         """
-        pass
+        # Loggerの設定
+        _richhandler = RichHandler(rich_tracebacks = True)
+        _richhandler.setFormatter(logging.Formatter('%(message)s'))
+        basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+        AsyncManager._logger: Logger = getLogger('rich')
 
     @classmethod
     @abstractmethod
