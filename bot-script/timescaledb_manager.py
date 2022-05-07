@@ -77,18 +77,17 @@ class TimescaleDBManager(AsyncManager):
 
         Returns
         -------
-        なし。失敗した場合は例外をRaiseする。
+        なし。失敗した場合は例外をRaiseする
         """
-        assert TimescaleDBManager._instance is None
-
-        TimescaleDBManager._instance = TimescaleDBManager(params, logger)
-
-        return
+        if TimescaleDBManager._instance is not None:
+            return
+        else:
+            TimescaleDBManager._instance: TimescaleDBManager = TimescaleDBManager(params, logger)
 
     @classmethod
     async def run_async(cls) -> None:
         """
-        TimescaleDBManagerの非同期タスクループ起動用メソッド
+        このマネージャーの非同期タスクループ起動用メソッド
         
         Parameters
         ----------
@@ -120,7 +119,7 @@ class TimescaleDBManager(AsyncManager):
         assert TimescaleDBManager._instance._engines['postgres'] is not None
 
         # DB接続エンジンを初期化
-        _instance = TimescaleDBManager._instance
+        _instance: TimescaleDBManager = TimescaleDBManager._instance
         _sqlalchemy_config = f"postgresql+psycopg2://{_instance._user}:{_instance._password}@{_instance._host}:{_instance._port}/{db_name}"
         _instance._engines[db_name] = create_engine(_sqlalchemy_config, pool_pre_ping = True)
 
