@@ -74,6 +74,18 @@ services:
       - "2181:2181"
       - "9092:9092"
 
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8890:8080
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper0:2181
+      
 # 各コンテナが利用するディスクスペースの宣言
 volumes:
   timescaledb_volume:

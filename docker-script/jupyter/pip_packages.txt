@@ -25,3 +25,4 @@ git+https://github.com/MtkN1/pybotters.git@develop
 rich
 python-logging-discord-handler
 sqlalchemy_utils
+aiokafka
