@@ -11,6 +11,42 @@ class AsyncManager(ABC):
     # 全ての派生クラスで共有されるロガー
     _logger: Logger = None
 
+    # 全ての派生クラスで利用されるログ系のクラスメソッド
+    @classmethod
+    def log_debug(cls, msg: str = None):
+        assert msg is not None
+        
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.debug(msg)
+
+    @classmethod
+    def log_info(cls, msg: str = None):
+        assert msg is not None
+        
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.info(msg)
+
+    @classmethod
+    def log_warning(cls, msg: str = None):
+        assert msg is not None
+        
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.warning(msg)
+
+    @classmethod
+    def log_error(cls, msg: str = None):
+        assert msg is not None
+        
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.error(msg)
+
+    @classmethod
+    def log_critical(cls, msg: str = None):
+        assert msg is not None
+        
+        if AsyncManager._logger is not None:
+            AsyncManager._logger.critical(msg)
+
     @classmethod
     def set_logger(cls, logger: Logger = None) -> None:
         """
@@ -26,8 +62,8 @@ class AsyncManager(ABC):
         なし。失敗した場合は例外をRaiseする。
         """
         assert logger is not None
-        cls._logger = logger        
-
+        cls._logger = logger
+    
     @classmethod
     @abstractmethod
     async def init_async(cls, params: dict = None, logger: Logger = None) -> None:
@@ -41,6 +77,39 @@ class AsyncManager(ABC):
         Returns
         -------
         なし。失敗した場合は例外をRaiseする。
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def init_database(cls, force: bool):
+        """
+        このマネージャーが利用するDBとテーブルの初期化用抽象メソッド
+        
+        Parameters
+        ----------
+        force : bool
+            強制的にテーブルを初期化するか否か
+
+        Returns
+        ----------
+        なし。失敗した場合は例外をRaiseする
+        """
+        pass      
+
+    @classmethod
+    @abstractmethod
+    def get_table_name(cls) -> str:
+        """
+        このマネージャーが使うテーブル名を取得する関数
+        
+        Parameters
+        ----------
+        なし
+        
+        Returns
+        ----------
+        テーブル名 : str
         """
         pass
 
