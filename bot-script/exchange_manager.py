@@ -15,11 +15,11 @@ class ExchangeManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
     _instance: object = None
 
-    # 対応済み取引所文字列のリスト
-    _exchange_str_list = ['binanceusdm_testnet', 'binanceusdm']
+    # このマネージャーが利用するデータベース名を保持するクラス変数
+    _database_name = 'ExchangeManager'
 
-    # オーダーイベントとDB内のカラム名の対象用の辞書
-    _order_columns_dict = {
+    # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
+    _db_columns_dict = {
         's': ('symbol', 'TEXT', 'NOT NULL'),
         'c': ('client_order_id', 'TEXT', 'NOT NULL'),
         'S': ('side', 'TEXT', 'NOT NULL'),
@@ -62,8 +62,6 @@ class ExchangeManager(AsyncManager):
             (必須) 初期化パラメータが入った辞書
         params['exchange_name'] : str
             (必須) DBアクセス時に利用する取引所名
-        params['timebar_interval'] : timedelta
-            (必須) この取引所で利用する時間足
         params['client'] : pybotters.Client
             (必須) PyBotters.Clientのインスタンス
         params['ws_baseurl'] : str
@@ -74,12 +72,10 @@ class ExchangeManager(AsyncManager):
         なし。失敗した場合は例外をRaiseする。
         """
         assert params['exchange_name'] is not None
-        assert params['timebar_interval'] is not None
         assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
         self._exchange_name: str = params['exchange_name']
-        self._timebar_interval: timedelta = params['timebar_interval']
         self._client: pybotters.Client = params['client']
         self._ws_baseurl: str = params['ws_baseurl']
 
@@ -130,17 +126,16 @@ class ExchangeManager(AsyncManager):
         assert ExchangeManager._instance is None
 
         assert params['exchange_name'] is not None
-        assert params['timebar_interval'] is not None
         assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
         if AsyncManager._logger is not None:
-            AsyncManager._logger.debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
+            AsyncManager.log_debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
 
         ExchangeManager._instance = ExchangeManager(params)
 
-        # ログ用のテーブルとDBを初期化する
-        ExchangeManager._init_order_log_table()
+        # ExchangeManager用のDBを初期化する
+        ExchangeManager.init_database()
         
         # 取引所の情報を更新する
         await ExchangeManager._instance.update_exchangeinfo_async()
@@ -298,7 +293,7 @@ class ExchangeManager(AsyncManager):
         assert ExchangeManager._instance is not None
         _instance = ExchangeManager._instance
 
-        _table_name = ExchangeManager.get_order_log_table_name()
+        _table_name = ExchangeManager.get_table_name()
 
         while True:
             _events = await _instance._datastore.order.wait()
@@ -308,9 +303,27 @@ class ExchangeManager(AsyncManager):
                 TimescaleDBManager.log_order_update(_table_name, _event)
     
     @classmethod
-    def get_order_log_table_name(cls) -> str:
+    def get_exchange_name(cls) -> str:
         """
-        取引ログテーブル名を取得する関数
+        DBで利用する取引所名を取得する関数
+        
+        Parameters
+        ----------
+        なし
+        
+        Returns
+        ----------
+        テーブル名 : str
+        """
+        assert ExchangeManager._instance is not None
+        _instance = ExchangeManager._instance
+
+        return _instance._exchange_name.lower()
+
+    @classmethod
+    def get_table_name(cls) -> str:
+        """
+        このマネージャーが使うテーブル名を取得する関数
         
         Parameters
         ----------
@@ -326,7 +339,7 @@ class ExchangeManager(AsyncManager):
         return f'{_instance._exchange_name}_order_log'.lower()
 
     @classmethod
-    def use_api_weight_async(cls, weight: int = 0) -> bool:        
+    def use_api_weight(cls, weight: int = 0) -> bool:        
         """
         API利用のために必要な残ウェイトが残っているか否かを判定する関数
         
@@ -381,6 +394,26 @@ class ExchangeManager(AsyncManager):
 
         return cw_usdt_balance
     
+    @classmethod
+    def get_all_symbols(cls) -> set:
+        """
+        現在対応している全銘柄の一覧を取得する関数
+        
+        Parameters
+        ----------
+        なし
+        
+        Returns
+        ----------
+        set
+            全銘柄名を含んだset (銘柄名は全て大文字でbaseアセットとquoteアセットの区切り文字はない)
+        """
+        assert ExchangeManager._instance is not None
+        _instance = ExchangeManager._instance
+
+        return _instance._all_symbols.copy()
+
+
     @classmethod
     def _get_latest_markprice(cls) -> pd.Series:
         """
@@ -551,9 +584,9 @@ class ExchangeManager(AsyncManager):
             AsyncManager._logger.info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
     
     @classmethod
-    def _init_order_log_table(cls, force = False):
+    def init_database(cls, force = False):
         """
-        オーダー情報用のテーブルを初期化する
+        オーダー情報用のDBとテーブルを初期化する
         
         Parameters
         ----------
@@ -567,21 +600,24 @@ class ExchangeManager(AsyncManager):
         assert ExchangeManager._instance is not None
         _instance = ExchangeManager._instance
 
-        _table_name = ExchangeManager.get_order_log_table_name()
-
+        _table_name = ExchangeManager.get_table_name()
+        
         try:
-            TimescaleDBManager.init_database('log')
-            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", 'log')
+            # このマネージャー専用のデータベースの作成を試みる。すでにある場合はそのまま処理を続行する
+            TimescaleDBManager.init_database('ExchangeManager')
+
+            # テーブルが存在しているか確認する
+            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", ExchangeManager. _database_name)
         except Exception as e:
             if AsyncManager._logger:
-                AsyncManager._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {_table_name}) : Table initialization failed. Exception {e}')
+                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {ExchangeManager._database_name}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
             return
                 
         # テーブルそのものがないケース
-        _columns_str_list = [f'{v[0]} {v[1]} {v[2]}' for k, v in _instance._order_columns_dict.items()]
+        _columns_str_list = [f'{v[0]} {v[1]} {v[2]}' for k, v in _instance._db_columns_dict.items()]
         _columns_str = ', '.join(_columns_str_list)
         
         # 目標ウェイト記録テーブルを作成
@@ -591,10 +627,11 @@ class ExchangeManager(AsyncManager):
                 f" SELECT create_hypertable ('{_table_name}', 'datetime');")
         
         try:
-            TimescaleDBManager.execute_sql(_sql, 'log')
+            # テーブルの削除と再作成を試みる            
+            TimescaleDBManager.execute_sql(_sql, ExchangeManager._database_name)
         except Exception as e:
             if AsyncManager._logger:
-                AsyncManager._logger.error(f'TimescaleDBManager._init_order_log_table(table_name = {table_name}) : Create table failed. Exception {e}')
+                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {ExchangeManager._database_name}, table_name = {_table_name}) : Create table failed. Exception {e}')
             raise(e)
 
     @classmethod
@@ -616,23 +653,23 @@ class ExchangeManager(AsyncManager):
         _instance = ExchangeManager._instance
 
         _sql_dict = {}
-        _table_name = ExchangeManager.get_order_log_table_name()
+        _table_name = ExchangeManager.get_table_name()
 
         for k, v in order.items():
-            if k not in _instance._order_columns_dict:
+            if k not in _instance._db_columns_dict:
                 continue
             
-            _type = _instance._order_columns_dict[k][1]
+            _type = _instance._db_columns_dict[k][1]
             if _type == 'NUMERIC':
-                _sql_dict[_instance._order_columns_dict[k][0]] = Decimal(v)
+                _sql_dict[_instance._db_columns_dict[k][0]] = Decimal(v)
             elif _type == 'BIGINT':
-                _sql_dict[_instance._order_columns_dict[k][0]] = int(v)
+                _sql_dict[_instance._db_columns_dict[k][0]] = int(v)
             elif _type == 'TIMESTAMP':
-                _sql_dict[_instance._order_columns_dict[k][0]] = f'\'{datetime.fromtimestamp(v / 1000, tz = timezone.utc)}\''
+                _sql_dict[_instance._db_columns_dict[k][0]] = f'\'{datetime.fromtimestamp(v / 1000, tz = timezone.utc)}\''
             elif _type == 'BOOLEAN':
-                _sql_dict[_instance._order_columns_dict[k][0]] = v
+                _sql_dict[_instance._db_columns_dict[k][0]] = v
             else:
-                _sql_dict[_instance._order_columns_dict[k][0]] = f'\'{v.lower()}\''
+                _sql_dict[_instance._db_columns_dict[k][0]] = f'\'{v.lower()}\''
             
         _sql_dict['datetime'] = _sql_dict['order_trade_time']
 
@@ -668,7 +705,6 @@ if __name__ == "__main__":
         async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
             _exchange_params = {
                 'exchange_name': exchange_config['exchange_name'],
-                'timebar_interval': timedelta(minutes = 5),
                 'client': _client,
                 'ws_baseurl': exchange_config['ws_baseurl']
             }

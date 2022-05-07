@@ -139,6 +139,21 @@ class TimescaleDBManager(AsyncManager):
         if _r.rowcount == 0:
             cls.execute_sql("CREATE TYPE enum_side AS ENUM ('buy', 'sell')", db_name)
 
+    @classmethod
+    def get_table_name(cls) -> str:
+        """
+        このマネージャーが使うテーブル名を取得する関数
+        
+        Parameters
+        ----------
+        なし
+        
+        Returns
+        ----------
+        テーブル名 : str
+        """
+        # このマネージャーは自分用のテーブルを持たない
+        return None
 
     @classmethod
     def execute_sql(cls, sql: str = None, db_name: str = None) -> dict:
@@ -219,9 +234,9 @@ class TimescaleDBManager(AsyncManager):
         assert df is not None and df.empty == False
         assert db_name is not None
         assert schema is not None
-        assert cls._instance is not None
+        assert TimescaleDBManager._instance is not None
         
-        return df.to_sql(schema, con = cls._instance._engines[db_name], if_exists = if_exists, index = False)
+        return df.to_sql(schema, con = TimescaleDBManager._instance._engines[db_name], if_exists = if_exists, index = False)
 
 if __name__ == "__main__":
     # 簡易的なテストコード
@@ -240,7 +255,6 @@ if __name__ == "__main__":
     
     async def test():
         await TimescaleDBManager.init_async(pg_config)
-        TimescaleDBManager.init_database('timebar', True)
     
     try:
         asyncio.run(test())

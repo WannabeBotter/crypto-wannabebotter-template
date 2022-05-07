@@ -9,59 +9,81 @@ import numpy as np
 import pandas as pd
 
 from logging import Logger
+from psycopg2 import Time
 
 import pybotters
 
+from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
 from exchange_manager import ExchangeManager
 
-class TimebarManager:
-    _instance = None
-    
-    @classmethod
-    def _convert_timebar_list_to_websocket_dict(self, symbol: str=None, timebar_list: list=None) -> dict:
-        """
-        Binance REST APIで得られたリスト形式のタイムバーをBinance Websocket APIで得られる辞書型形式に変換する関数
+class TimebarManager(AsyncManager):
+    # グローバル共有のインスタンスを保持するクラス変数
+    _instance: object = None
 
-        Parameters
-        ----------
-        symbol : str
-            (必須) シンボル名
-        timebar_list : list
-            (必須) 変換元のリスト形式のタイムバー
-        
-        Returns
-        -------
-        dict
-            BinanceのWebSocket APIが返す辞書型形式で表現された1本のタイムバー
-        """
-        assert symbol is not None, "Symbol must not None"
-        assert timebar_list is not None, "timebar_list must not None"
-        assert len(timebar_list) == 12, "Timebar list length isn't 12"
+    # PyBottersのインスタンスを保持するクラス変数
+    _client: pybotters.Client = None
 
-        _duration = ((timebar_list[6] + 1) - timebar_list[0]) // 1000
-        _duration_str = TimescaleDBManager.convert_interval_to_str(timedelta(seconds = _duration))
+    # タイムバー間隔を保持するクラス変数
+    _timebar_interal = None
+
+    # このマネージャーが利用するデータベース名を保持するクラス変数
+    _database_name = 'TimebarManager'
+
+    # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
+    _db_columns_dict = {
+        0: ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
+        6: ('datetime_to', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
+
+        200: ('symbol', 'TEXT', 'NOT NULL'),
+
+        1: ('open', 'NUMERIC', 'NOT NULL'),
+        2: ('high', 'NUMERIC', 'NOT NULL'),
+        3: ('low', 'NUMERIC', 'NOT NULL'),
+        4: ('close', 'NUMERIC' ,'NOT NULL'),
         
-        return {
-                't': timebar_list[0],
-                'T': timebar_list[6],
-                's': symbol,
-                'i': _duration_str,
-                'f': 0,
-                'L': 0,
-                'o': timebar_list[1],
-                'h': timebar_list[2],
-                'l': timebar_list[3],
-                'c': timebar_list[4],
-                'v': timebar_list[5],
-                'n': timebar_list[8],
-                'x': True,
-                'q': timebar_list[7],
-                'V': timebar_list[9],
-                'Q': timebar_list[10],
-                'B': timebar_list[11],
-            }
-    
+        # 100 ~ 199のキーはマーク価格APIを呼び出した際に利用する。マーク価格APIから返ってきた添え字に100を足してこの辞書を参照すると対応するカラム情報が取得できる
+        101: ('mark_open', 'NUMERIC', 'NOT NULL'),
+        102: ('mark_high', 'NUMERIC', 'NOT NULL'),
+        103: ('mark_low', 'NUMERIC', 'NOT NULL'),
+        104: ('mark_close', 'NUMERIC' ,'NOT NULL'),
+
+        8: ('trade_count', 'NUMERIC', 'NOT NULL'),
+
+        5: ('base_volume', 'NUMERIC', 'NOT NULL'),
+        7: ('quote_volume', 'NUMERIC', 'NOT NULL'), # USDT建て
+        9: ('quote_buy_volume', 'NUMERIC', 'NOT NULL'), # USDT建て
+        10: ('base_buy_volume', 'NUMERIC', 'NOT NULL'),
+        
+        # 200以上のキーは実際にBinance APIから送られてくることはなく、こちらで計算してDBに入れる値
+        201: ('quote_lqd_volume', 'NUMERIC', 'NOT NULL'), # USDT建て
+        202: ('quote_lqd_buy_volume', 'NUMERIC', 'NOT NULL'), # USDT建て
+
+        203: ('quote_volume_cumsum', 'NUMERIC', 'NOT NULL'), # USDT建て
+        204: ('quote_buy_volume_cumsum', 'NUMERIC', 'NOT NULL') # USDT建て
+    }
+
+    # 秒をTimescaleDBとBinance APIで利用できるタイムバー間隔に変換するためのdict
+    _timebar_interval_dict = {
+        60: '1m',
+        180: '3m',
+        300: '5m',
+        900: '15m',
+        1800: '30m',
+        3600: '1h',
+        7200: '2h',
+        14400: '4h',
+        28800: '8h',
+        43200: '12h',
+        86400: '1d',
+        259200: '3d',
+        604800: '7d',
+        2419200: '1M', # 1 month = 28 days
+        2505600: '1M', # 1 month = 29 days
+        2592000: '1M', # 1 month = 30 days
+        2678400: '1M', # 1 month = 31 days
+    }
+        
     @classmethod
     def _convert_timebar_list_to_timescaledb_dict(self, timebar_list: list = None, markprice = False) -> dict:
         """
@@ -94,116 +116,243 @@ class TimebarManager:
         return {
             'datetime': datetime.fromtimestamp(timebar_list[0] / 1000, tz=timezone.utc),
             'datetime_to': datetime.fromtimestamp(timebar_list[6] / 1000, tz=timezone.utc),
-            'id': 0,
-            'id_to': 0,
             'open': Decimal(timebar_list[1]),
             'high': Decimal(timebar_list[2]),
             'low': Decimal(timebar_list[3]),
             'close': Decimal(timebar_list[4]),
-            'volume': Decimal(timebar_list[5]),
-            'dollar_volume': Decimal(timebar_list[7]),
-            'dollar_buy_volume': Decimal(timebar_list[10]),
-            'dollar_sell_volume': Decimal(timebar_list[7]) - Decimal(timebar_list[10]),
-            'dollar_liquidation_volume': Decimal(0),
-            'dollar_liquidation_buy_volume': Decimal(0),
-            'dollar_liquidation_sell_volume': Decimal(0),
-            'dollar_cumsum': Decimal(0),
-            'dollar_buy_cumsum': Decimal(0),
-            'dollar_sell_cumsum': Decimal(0),
+            'base_volume': Decimal(timebar_list[5]),
+            'quote_volume': Decimal(timebar_list[7]),
+            'trade_count': Decimal(timebar_list[8]),
+            'base_buy_volume': Decimal(timebar_list[9]),
+            'quote_buy_volume': Decimal(timebar_list[10])
         }
 
+    def __init__(self, params: dict = None):
+        """
+        TimebarManagerコンストラクタ
+        
+        Parameters
+        ----------
+        params['client'] : pybotters.Client
+            (必須) PyBotters.Clientのインスタンス
+        params['timebar_interval'] : timedelta
+            (必須) このTimebarManagerで利用するタイムバーの間隔
+
+        Returns
+        -------
+        なし
+        """
+        assert params['client'] is not None
+        assert params['timebar_interval'] is not None
+
+        self._client = params['client']
+        self._timebar_interval: timedelta = params['timebar_interval']
+
     @classmethod
-    async def init_async(cls, client: pybotters.Client = None, timescaledb_manager: TimescaleDBManager = None, exchange_manager: ExchangeManager = None,
-                        timebar_interval: timedelta = None, cache_duration: timedelta = None, logger: Logger = None, async_job: bool = False) -> object:
+    async def init_async(cls, params: dict = None) -> object:
         """
         TimebarManagerのインスタンスを作成しする非同期初期化関数
         
         Parameters
         ----------
-        client : pybotters.Client
+        params['client'] : pybotters.Client
             (必須) PyBotters.Clientのインスタンス
-        timescaledb_manager : TimescaleDBManager
-            (必須) TimescaleDBManagerのインスタンス
-        timebar_interval : timedelta
+        params['timebar_interval'] : timedelta
             (必須) このTimebarManagerで利用するタイムバーの間隔
-        cache_duration : timedelta
-            (必須) メモリ上のキャッシュにタイムバーを保持する持続時間
-        logger : Logger
-            (必須) ロガー
 
         Returns
         -------
         TimebarManager
             TimebarManagerのインスタンス
         """
-        assert cls._instance is None
+        assert TimebarManager._instance is None
+        assert params['client'] is not None
+        assert params['timebar_interval'] is not None
 
-        logger.debug(f'TimebarManager._init_async(async_job = {async_job})')
+        AsyncManager.log_debug(f'TimebarManager._init_async()')
 
-        cls._instance = TimebarManager(client, timescaledb_manager, exchange_manager, timebar_interval, cache_duration, logger)
-        assert cls._instance is not None
+        TimebarManager._instance = TimebarManager(params)
+        TimebarManager.init_database()
 
-        if async_job:
-            # 非同期ジョブを実行するフラグが指定されていたら、タイムバーをダウンロードするタスクを作成する
-            asyncio.create_task(cls._instance._update_all_klines_loop_async())
-
-        return cls._instance
-
-    def __init__(self, client: pybotters.Client = None, timescaledb_manager: TimescaleDBManager = None, exchange_manager: ExchangeManager = None,
-                 timebar_interval: timedelta = None, cache_duration: timedelta = None, logger: Logger = None):
+        
+    @classmethod
+    async def run_async(cls) -> None:
         """
-        TimebarManagerコンストラクタ
+        TimebarManagerの非同期タスクループ起動用メソッド
         
         Parameters
         ----------
-        client : pybotters.Client
-            (必須) PyBotters.Clientのインスタンス
-        dbutil : timescaledb_util.TimeScaleDBUtil
-            (必須) TimeScaleDBUtilのインスタンス
-        exchange_manager : timescaledb_util.TimeScaleDBUtil
-            (必須) ExchangeManagerのインスタンス
-        timebar_interval : timedelta
-            (必須) このTimebarManagerで利用するタイムバーの間隔 (秒)
-        cache_duration : timedelta
-            (必須) メモリ上のキャッシュにタイムバーを保持する持続時間
-        logger : Logger
-            (必須) ロガー
+        なし
 
         Returns
         -------
-        なし
+        なし。失敗した場合は例外をRaiseする。
         """
-        assert client is not None
-        assert timescaledb_manager is not None
-        assert exchange_manager is not None
-        assert timebar_interval is not None
-        assert cache_duration is not None
-        assert logger is not None
+        assert TimebarManager._instance is not None
 
-        self._logger = logger
-        self._client = client
-        self._timescaledb_manager = timescaledb_manager
-        self._exchange_manager = exchange_manager
+        _instance = TimebarManager._instance
 
-        self._timebar_interval:timedelta = timebar_interval
-        self._cache_duration: timedelta = cache_duration
+        # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
+        asyncio.create_task(TimebarManager._instance._update_all_klines_loop_async())
 
-        self._asyncio_lock = asyncio.Lock()
+    @classmethod
+    def init_database(cls, force = False):
+        """
+        タイムバー情報用のDBとテーブルを初期化する
         
-    async def get_all_timebars_from_db(self, exchange_str: str = None, column: str = None, get_from: datetime = None, get_to: datetime = None):
-        assert exchange_str is not None
-        assert get_from is not None
-        assert column is not None
-        assert get_to is not None
+        Parameters
+        ----------
+        force : bool
+            強制的にテーブルを初期化するか否か (デフォルト値はfalse)
 
+        Returns
+        ----------
+        なし。失敗した場合は例外をRaiseする
+        """
+        assert TimebarManager._instance is not None
+        _instance = TimebarManager._instance
+
+        _table_name = TimebarManager.get_table_name()
+
+        try:
+            # このマネージャー専用のデータベースの作成を試みる。すでにある場合はそのまま処理を続行する
+            TimescaleDBManager.init_database(TimebarManager._database_name)
+
+            # データベースの中にテーブルが存在しているか確認する
+            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", TimebarManager._database_name)
+        except Exception as e:
+            if AsyncManager._logger:
+                AsyncManager._logger.error(f'TimebarManager.init_database(database_name = {TimebarManager._database_name}, table_name = {_table_name}) : Database init failed. Exception {e}')
+            raise(e)
+        
+        if len(_df.index) > 0 and force == False:
+            return
+                
+        # テーブルそのものがないケース
+        _columns_str_list = [f'{v[0]} {v[1]} {v[2]}' for k, v in _instance._db_columns_dict.items()]
+        _columns_str = ', '.join(_columns_str_list)
+        
+        # 目標ウェイト記録テーブルを作成
+        _sql = (f'DROP TABLE IF EXISTS "{_table_name}" CASCADE;'
+                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str});'
+                f' CREATE INDEX ON "{_table_name}" (datetime DESC);'
+                f" SELECT create_hypertable ('{_table_name}', 'datetime');")
+        
+        try:
+            # テーブルの削除と再作成を試みる
+            TimescaleDBManager.execute_sql(_sql, TimebarManager._database_name)
+        except Exception as e:
+            if AsyncManager._logger:
+                AsyncManager._logger.error(f'TimebarManager.init_database(database_name = {TimebarManager._database_name}, table_name = {_table_name}) : Create table failed. Exception {e}')
+            raise(e)
+    
+    @classmethod
+    def get_table_name(cls) -> str:
+        """
+        このマネージャーが使うテーブル名を取得する関数
+        
+        Parameters
+        ----------
+        なし
+        
+        Returns
+        ----------
+        テーブル名 : str
+        """
+        assert TimebarManager._instance is not None
+        assert TimebarManager._instance._timebar_interval is not None
+
+        _keys = list(cls._timebar_interval_dict.keys())
+        _interval_sec: int = int(TimebarManager._instance._timebar_interval.total_seconds())
+
+        assert _interval_sec in _keys, f"get_table_name(): {_interval_sec} is not in {_keys}"
+
+        _interval_str = cls._timebar_interval_dict[_interval_sec]
+
+        return f'{ExchangeManager.get_exchange_name()}_timebar_{_interval_str}'.lower()
+    
+    def get_latest_timebar(self, symbol: str = None, limit: int = 1):
+        """
+        DB上の最新のタイムバーをlimitで指定した本数取得する
+        
+        Parameters
+        ----------
+        symbol : str
+            (必須) シンボル名
+        limit: int
+            読み込む行数
+
+        Returns
+        ----------
+        pd.DataFrame
+            該当するタイムバーが存在する
+        None
+            該当するタイムバーが存在しない
+        """
+        assert symbol is not None
+        assert limit >= 1
+
+        _table_name = self.get_table_name()
+        
+        try:
+            _df = TimescaleDBManager.read_sql_query(f'SELECT * FROM "{_table_name}" WHERE symbol = \'{symbol}\' ORDER BY datetime DESC LIMIT {limit}', TimebarManager._database_name, dtype = str)
+        except Exception as e:
+            AsyncManager.log_error(f'TimebarManager.get_latest_timebar(symbol = {symbol}) : Read failed. Exception {e}')
+
+        if len(_df) > 0:
+            _to_decimal = lambda x: Decimal(x)
+            _df['datetime'] = pd.to_datetime(_df['datetime'], format='%Y-%m-%d %H:%M:%S%z')                
+            _df['datetime_to'] = pd.to_datetime(_df['datetime_to'], format='%Y-%m-%d %H:%M:%S%z')
+            _df['open'] = _df['open'].apply(_to_decimal)
+            _df['high'] = _df['high'].apply(_to_decimal)
+            _df['low'] = _df['low'].apply(_to_decimal)
+            _df['close'] = _df['close'].apply(_to_decimal)
+            _df['mark_open'] = _df['mark_open'].apply(_to_decimal)
+            _df['mark_high'] = _df['mark_high'].apply(_to_decimal)
+            _df['mark_low'] = _df['mark_low'].apply(_to_decimal)
+            _df['mark_close'] = _df['mark_close'].apply(_to_decimal)
+            _df['base_volume'] = _df['base_volume'].apply(_to_decimal)
+            _df['quote_volume'] = _df['quote_volume'].apply(_to_decimal)
+            _df['quote_buy_volume'] = _df['quote_buy_volume'].apply(_to_decimal)
+            _df['quote_lqd_volume'] = _df['quote_lqd_volume'].apply(_to_decimal)
+            _df['quote_lqd_buy_volume'] = _df['quote_lqd_buy_volume'].apply(_to_decimal)
+            _df['quote_volume_cumsum'] = _df['quote_volume_cumsum'].apply(_to_decimal)
+            _df['quote_buy_volume_cumsum'] = _df['quote_buy_volume_cumsum'].apply(_to_decimal)
+            return _df.sort_values('datetime', ascending = True)
+        
         return None
 
-    async def _get_timebar_from_api_async(self, symbol_str: str = None, since: int = None, limit: int = 1, markprice = False):
+    @classmethod
+    def get_interval_str(cls, interval: timedelta = None) -> str:
+        """
+        与えられたtimedeltaをBinance APIで利用できるタイムバー間隔を指定する文字列に変換する関数
+        
+        Parameters
+        ----------
+        interval : timedelta
+            (必須) タイムバー間隔
+        
+        Returns
+        -------
+        str
+            BinanceのWebSocket APIが利用できるタイムバー間隔指定文字列
+        """
+        assert TimebarManager._instance is not None
+        assert interval is not None
+
+        _keys = list(TimebarManager._timebar_interval_dict.keys())
+        _interval_sec: int = int(interval.total_seconds())
+
+        assert _interval_sec in _keys, f"get_interval_str(): {_interval_sec} is not in {_keys}"
+
+        return TimebarManager._timebar_interval_dict[_interval_sec]
+
+    async def _get_timebar_from_api_async(self, symbol: str = None, since: int = None, limit: int = 1, markprice = False):
         """
         指定されたシンボルのタイムバー情報を取得する関数
         パラメータ
         ----------
-        symbol_str : str
+        symbol : str
             (必須) シンボル名
         since : int
             タイムバーを取得し始める時間 (ミリ秒)
@@ -218,8 +367,8 @@ class TimebarManager:
         assert self._timebar_interval is not None
 
         _params = {}
-        _params['symbol'] = symbol_str
-        _params['interval'] = TimescaleDBManager.convert_interval_to_str(self._timebar_interval)
+        _params['symbol'] = symbol
+        _params['interval'] = TimebarManager.get_interval_str(self._timebar_interval)
         _params['limit'] = limit
         if since is not None:
             _params['startTime'] = since
@@ -240,12 +389,14 @@ class TimebarManager:
 
         while True:
             try:
-                _api_use_result = await self._exchange_manager.use_api_weight_async(_api_weight)
+                _api_use_result = ExchangeManager.use_api_weight(_api_weight)
                 if _api_use_result == True:
                     if markprice == True:
-                        _r = await self._client.get(f'/fapi/v1/markPriceKlines', params=_params)
+                        _url = '/fapi/v1/markPriceKlines'
                     else:
-                        _r = await self._client.get(f'/fapi/v1/klines', params=_params)
+                        _url = '/fapi/v1/klines'
+
+                    _r = await self._client.get(_url, params=_params)
                     
                     # リクエスト結果による分岐
                     if _r.status == 200:
@@ -253,12 +404,12 @@ class TimebarManager:
                     else:
                         # 200以外は1秒待ってリトライ
                         _text = await _r.text()
-                        self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol_str} Retry. Status ({_r.status}) : {_text}')
+                        self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Status ({_r.status}) : {_text}')
                         await asyncio.sleep(1.0)
                         _retry_count = _retry_count + 1
             except Exception as e:
                 # 例外は1秒待ってリトライ
-                self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol_str} Retry. Exception : {e}')
+                self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Exception : {e}')
                 await asyncio.sleep(1.0)
                 _retry_count = _retry_count + 1
             
@@ -267,7 +418,7 @@ class TimebarManager:
                 return None
         return _r
 
-    async def _update_kline_db_async(self, symbol_str: str = None, interval: timedelta = None) -> bool:
+    async def _update_kline_db_async(self, symbol: str = None, interval: timedelta = None) -> bool:
         """
         指定されたシンボルのタイムバー情報を取得する関数
         
@@ -287,27 +438,22 @@ class TimebarManager:
         """
         assert self._timebar_interval is not None
 
-        # テーブルが存在することを確認、Falseならばテーブルは存在せず処理を継続できない
-        if self._timescaledb_manager.init_timebar_table(self._exchange_manager.exchange_name, self._timebar_interval) == False:
-            return False
-        
-        _table_name = self._timescaledb_manager.get_timebar_table_name(self._exchange_manager.exchange_name, self._timebar_interval)
+        _table_name = self.get_table_name()
 
         # 一度でも新しいバーを読み込んだかを記録するフラグ
         _updated: bool = False
 
         # どの時間からダウンロードを開始するか等のデフォルト値
         _since: int = 0
-        _dollar_cumsum_offset: Decimal = Decimal(0)
-        _dollar_buy_cumsum_offset: Decimal = Decimal(0)
-        _dollar_sell_cumsum_offset: Decimal = Decimal(0)
+        _quote_volume_cumsum_offset: Decimal = Decimal(0)
+        _quote_buy_volume_cumsum_offset: Decimal = Decimal(0)
 
         _df: pd.DataFrame = None
 
         try:
-            _df_latest: pd.DataFrame = self._timescaledb_manager.get_latest_timebar(self._exchange_manager.exchange_name, symbol_str, self._timebar_interval, 1)
+            _df_latest: pd.DataFrame = self.get_latest_timebar(symbol, 1)
         except Exception as e:
-            self._logger.error(f'TimebarManager._update_kline_db_async() : Exception when getting the latest {symbol_str} timebar : {e}')
+            AsyncManager.log_error(f'TimebarManager._update_kline_db_async() : Exception when getting the latest {symbol} timebar : {e}')
             return False
         
         # _dfが読み込めている場合のみダウンロード開始時間等を最新のタイムバーの値に基づいて更新する
@@ -315,14 +461,13 @@ class TimebarManager:
             _latest_timebar = _df_latest.iloc[-1]
             _latest_timestamp = int(_latest_timebar['datetime'].timestamp() * 1000)
             _since = _latest_timestamp + 1
-            _dollar_cumsum_offset = _latest_timebar['dollar_cumsum']
-            _dollar_buy_cumsum_offset = _latest_timebar['dollar_buy_cumsum']
-            _dollar_sell_cumsum_offset = _latest_timebar['dollar_sell_cumsum']
+            _quote_volume_cumsum_offset = _latest_timebar['quote_volume_cumsum']
+            _quote_buy_volume_cumsum_offset = _latest_timebar['quote_buy_volume_cumsum']
 
         _origin = _since
 
         while True:
-            _r = await self._get_timebar_from_api_async(symbol_str, _since, 499)
+            _r = await self._get_timebar_from_api_async(symbol, _since, 499)
             if _r is None:
                 # 何らかの理由で全くデータを取得できなかったので処理を中断する
                 break
@@ -339,7 +484,7 @@ class TimebarManager:
             _df_timebar.set_index('datetime', drop = True, inplace = True)
 
             # マーク価格を取得する
-            _r = await self._get_timebar_from_api_async(symbol_str, _since, 499, True)
+            _r = await self._get_timebar_from_api_async(symbol, _since, 499, True)
             if _r is None:
                 # 何らかの理由で全くデータを取得できなかったので処理を中断する
                 break
@@ -357,10 +502,11 @@ class TimebarManager:
 
             _df = _df_timebar.join(_df_markprice, how = 'inner', sort = True)
             
-            _df['dollar_cumsum'] = _df['dollar_volume'].cumsum() + _dollar_cumsum_offset
-            _df['dollar_buy_cumsum'] = _df['dollar_buy_volume'].cumsum() + _dollar_buy_cumsum_offset
-            _df['dollar_sell_cumsum'] = _df['dollar_sell_volume'].cumsum() + _dollar_sell_cumsum_offset
-            _df['symbol'] = symbol_str
+            _df['quote_lqd_volume'] = Decimal(0)
+            _df['quote_lqd_buy_volume'] = Decimal(0)
+            _df['quote_volume_cumsum'] = _df['quote_volume'].cumsum() + _quote_volume_cumsum_offset
+            _df['quote_buy_volume_cumsum'] = _df['quote_buy_volume'].cumsum() + _quote_buy_volume_cumsum_offset
+            _df['symbol'] = symbol
 
             # まだクローズしていないタイムバーを除外する
             _df = _df[_df['datetime_to'] < datetime.now(tz = timezone.utc) - timedelta(seconds = 5)]
@@ -371,10 +517,11 @@ class TimebarManager:
             if len(_df) > 0:
                 try:
                     # データベースに新しいタイムバーを書き込む
-                    self._timescaledb_manager.df_to_sql(df=_df, schema = _table_name, if_exists = 'append')
+                    TimescaleDBManager.df_to_sql(_df, TimebarManager._database_name, schema = _table_name, if_exists = 'append')
                 except Exception as e:
                     # データベース書き込みで失敗したのでただちに処理を中断する。取得できていたタイムバーはDBに書き込まれない
-                    break
+                    AsyncManager.log_error(f'TimebarManager._update_kline_db_async() : Exception when writing {symbol} timebar to DB: {e}')
+                    raise(e)
                 
                 # 更新フラグやcumsum系のオフセットを更新してもう一度タイムバー取得を試みる
                 _updated = True
@@ -384,16 +531,15 @@ class TimebarManager:
 
                 _since = int(_df.iat[-1, _df.columns.get_loc('datetime')].timestamp() * 1000 + 1)
                 
-                _dollar_cumsum_offset = _df.iat[-1, _df.columns.get_loc('dollar_cumsum')]
-                _dollar_buy_cumsum_offset = _df.iat[-1, _df.columns.get_loc('dollar_buy_cumsum')]
-                _dollar_sell_cumsum_offset = _df.iat[-1, _df.columns.get_loc('dollar_sell_cumsum')]
+                _quote_volume_cumsum_offset = _df.iat[-1, _df.columns.get_loc('quote_volume_cumsum')]
+                _quote_buy_volume_cumsum_offset = _df.iat[-1, _df.columns.get_loc('quote_buy_volume_cumsum')]
 
                 gc.collect()
             else:
                 break            
 
         return _updated
-            
+    
     async def _update_all_klines_loop_async(self):
         """
         タイムバーの取得とDBへの保存、コールバック関数の呼び出しを一定期間おきに繰り返す無限ループ関数
@@ -406,7 +552,8 @@ class TimebarManager:
         -------
         なし
         """
-        assert self._timebar_interval is not None
+        assert TimebarManager._instance is not None
+        _instance = TimebarManager._instance
 
         _last_download_second_idx = 0
 
@@ -416,23 +563,69 @@ class TimebarManager:
             _seconds = int(_now_timestamp)
             
             # 時間足更新時間から10秒の余裕を取る
-            _timebar_idx = int((_seconds - 10) / self._timebar_interval.total_seconds())
+            _timebar_idx = int((_seconds - 10) / _instance._timebar_interval.total_seconds())
 
             if _timebar_idx > _last_download_second_idx:
-                self._logger.info(f'TimebarManager._update_all_klines_loop_async() : Downloading timebars : _second_idx = {_timebar_idx}, symbol_num = {len(self._exchange_manager.set_all_components)}')
+                # 取引所の銘柄情報を最新のものに更新し、銘柄情報を取得する
+                await ExchangeManager.update_exchangeinfo_async()
+                _all_symbols = ExchangeManager.get_all_symbols()
+
+                AsyncManager.log_info(f'TimebarManager._update_all_klines_loop_async() : Downloading timebars : _second_idx = {_timebar_idx}, symbol_num = {len(_all_symbols)}')
                 _last_download_second_idx = _timebar_idx
                 
-                # 取引所の銘柄情報を最新のものに更新
-                await self._exchange_manager.update_exchangeinfo_async()
-
                 # 5分足をダウンロードしてDBに保存する
-                _update_tasks = [self._update_kline_db_async(_symbol, True) for _symbol in self._exchange_manager.set_all_components]
+                _update_tasks = [_instance._update_kline_db_async(_symbol, True) for _symbol in _all_symbols]
                 _rs = await asyncio.gather(*_update_tasks, return_exceptions = True)
 
                 for _r in _rs:
                     if isinstance(_r, Exception):
-                        self._logger.warning(f'TimebarManager._update_all_klines_loop_async() : Exception raised {_r}')
+                        _instance._logger.warning(f'TimebarManager._update_all_klines_loop_async() : Exception raised {_r}')
 
-                self._logger.info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
+                _instance._logger.info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
             
             await asyncio.sleep(1.0)
+
+if __name__ == "__main__":
+    # 簡易的なテストコード
+    from os import environ
+    from crypto_bot_config import pg_config, exchange_config, pybotters_apis
+    import logging
+    from logging import Logger, getLogger, basicConfig
+    from rich.logging import RichHandler
+
+    _richhandler = RichHandler(rich_tracebacks = True)
+    _richhandler.setFormatter(logging.Formatter('%(message)s'))
+    basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+    _logger: Logger = getLogger('rich')
+    AsyncManager.set_logger(_logger)
+    
+    async def test():
+        async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
+            _timebar_params = {
+                'client': _client,
+                'timebar_interval': timedelta(minutes = 5)
+            }
+
+            _exchange_params = {
+                'exchange_name': exchange_config['exchange_name'],
+                'client': _client,
+                'ws_baseurl': exchange_config['ws_baseurl']
+            }
+
+            await TimescaleDBManager.init_async(pg_config)
+            await ExchangeManager.init_async(_exchange_params)
+            await ExchangeManager.run_async()
+
+            await TimebarManager.init_async(_timebar_params)
+            await TimebarManager.run_async()
+
+            # 60秒待って動作を確認する
+            while True:
+                await asyncio.sleep(60.0)
+
+            ExchangeManager.print_positions()
+    
+    try:
+        asyncio.run(test())
+    except KeyboardInterrupt:
+        pass
