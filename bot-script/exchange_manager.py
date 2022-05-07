@@ -16,9 +16,6 @@ class ExchangeManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
     _instance: object = None
 
-    # このマネージャーが利用するデータベース名を保持するクラス変数
-    _database_name = 'ExchangeManager'
-
     # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
     _db_columns_dict = {
         's': ('symbol', 'TEXT', 'NOT NULL'),
@@ -613,10 +610,10 @@ class ExchangeManager(AsyncManager):
             TimescaleDBManager.init_database('ExchangeManager')
 
             # テーブルが存在しているか確認する
-            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", ExchangeManager. _database_name)
+            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", cls.__name__)
         except Exception as e:
             if AsyncManager._logger:
-                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {ExchangeManager._database_name}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
+                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
@@ -634,10 +631,10 @@ class ExchangeManager(AsyncManager):
         
         try:
             # テーブルの削除と再作成を試みる            
-            TimescaleDBManager.execute_sql(_sql, ExchangeManager._database_name)
+            TimescaleDBManager.execute_sql(_sql, cls.__name__)
         except Exception as e:
             if AsyncManager._logger:
-                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {ExchangeManager._database_name}, table_name = {_table_name}) : Create table failed. Exception {e}')
+                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
             raise(e)
 
     @classmethod
