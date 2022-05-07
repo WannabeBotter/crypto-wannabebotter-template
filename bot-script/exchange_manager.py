@@ -10,6 +10,7 @@ import pybotters
 
 from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
+from pybotters_manager import PyBottersManager
 
 class ExchangeManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
@@ -72,11 +73,9 @@ class ExchangeManager(AsyncManager):
         なし。失敗した場合は例外をRaiseする。
         """
         assert params['exchange_name'] is not None
-        assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
         self._exchange_name: str = params['exchange_name']
-        self._client: pybotters.Client = params['client']
         self._ws_baseurl: str = params['ws_baseurl']
 
         # 取引所情報の辞書
@@ -121,24 +120,21 @@ class ExchangeManager(AsyncManager):
 
         Returns
         -------
-        なし。初期化に失敗した場合は例外をRaiseする。
+        なし。初期化に失敗した場合は例外をRaiseする
         """
-        assert ExchangeManager._instance is None
-
         assert params['exchange_name'] is not None
-        assert params['client'] is not None
         assert params['ws_baseurl'] is not None
 
-        if AsyncManager._logger is not None:
+        if ExchangeManager._instance is not None:
+            return
+        else:
             AsyncManager.log_debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
 
-        ExchangeManager._instance = ExchangeManager(params)
-
-        # ExchangeManager用のDBを初期化する
-        ExchangeManager.init_database()
-        
-        # 取引所の情報を更新する
-        await ExchangeManager._instance.update_exchangeinfo_async()
+            ExchangeManager._instance: ExchangeManager = ExchangeManager(params)
+            ExchangeManager.init_database()
+            
+            # 取引所の情報を更新する
+            await ExchangeManager._instance.update_exchangeinfo_async()
     
     @classmethod
     async def run_async(cls) -> None:
@@ -155,20 +151,21 @@ class ExchangeManager(AsyncManager):
         """
         assert ExchangeManager._instance is not None
 
-        _instance = ExchangeManager._instance
+        _instance: ExchangeManager = ExchangeManager._instance
+        _client: pybotters.Client = PyBottersManager.get_client()
 
         # データストアを初期化する
         await _instance._datastore.initialize(
-            _instance._client.get('/fapi/v1/openOrders'),
-            _instance._client.get('/fapi/v2/positionRisk'),
-            _instance._client.get('/fapi/v2/balance'),
-            _instance._client.post('/fapi/v1/listenKey')
+            _client.get('/fapi/v1/openOrders'),
+            _client.get('/fapi/v2/positionRisk'),
+            _client.get('/fapi/v2/balance'),
+            _client.post('/fapi/v1/listenKey')
         )
 
         # アカウントのバランス・ポジション変化にsubscribeする
-        asyncio.create_task(_instance._client.ws_connect(f'{_instance._ws_baseurl}/ws/{_instance._datastore.listenkey}', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
-        asyncio.create_task(_instance._client.ws_connect(f'{_instance._ws_baseurl}/ws/!markPrice@arr@1s', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
-        asyncio.create_task(_instance._client.ws_connect(f'{_instance._ws_baseurl}/ws/!miniTicker@arr', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
+        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/{_instance._datastore.listenkey}', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
+        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!markPrice@arr@1s', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
+        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!miniTicker@arr', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
 
         # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
         asyncio.create_task(ExchangeManager._order_update_loop_async())
@@ -187,12 +184,14 @@ class ExchangeManager(AsyncManager):
         なし
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+
+        _instance: ExchangeManager = ExchangeManager._instance
+        _client: pybotters.Client = PyBottersManager.get_client()
 
         # 取引所情報をREST APIから取得する。リトライ回数は無限
         while True:
             try:
-                _r = await _instance._client.get('/fapi/v1/exchangeInfo')
+                _r = await _client.get('/fapi/v1/exchangeInfo')
                 if _r.status == 200:
                     break
                 else:
@@ -252,7 +251,8 @@ class ExchangeManager(AsyncManager):
         なし
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+
+        _instance: ExchangeManager = ExchangeManager._instance
 
         while True:
             try:
@@ -291,9 +291,9 @@ class ExchangeManager(AsyncManager):
         なし
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
 
-        _table_name = ExchangeManager.get_table_name()
+        _instance: ExchangeManager = ExchangeManager._instance
+        _table_name: str = ExchangeManager.get_table_name()
 
         while True:
             _events = await _instance._datastore.order.wait()
@@ -316,7 +316,8 @@ class ExchangeManager(AsyncManager):
         テーブル名 : str
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         return _instance._exchange_name.lower()
 
@@ -334,7 +335,8 @@ class ExchangeManager(AsyncManager):
         テーブル名 : str
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         return f'{_instance._exchange_name}_order_log'.lower()
 
@@ -357,13 +359,15 @@ class ExchangeManager(AsyncManager):
         """
         assert weight > 0
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _now_idx = int(datetime.now(tz = timezone.utc).timestamp()) // _instance._api_weight_reset_interval_sec
         if _now_idx > _instance._api_last_reset_idx:
             _instance._api_last_reset_idx = _now_idx
             _instance._api_weight = _instance._api_weight_reset_value
         if _instance._api_weight < weight:
+            AsyncManager.log_warning('ExchangeManager.use_api_weight() : Too many API call')
             return False
         
         _instance._api_weight -= weight
@@ -384,7 +388,8 @@ class ExchangeManager(AsyncManager):
             USDTの証拠金残額
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _balance = _instance._datastore.balance.find({'a': 'USDT'})
         if _balance is not None:
@@ -409,7 +414,8 @@ class ExchangeManager(AsyncManager):
             全銘柄名を含んだset (銘柄名は全て大文字でbaseアセットとquoteアセットの区切り文字はない)
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         return _instance._all_symbols.copy()
 
@@ -429,7 +435,8 @@ class ExchangeManager(AsyncManager):
             全銘柄分の最新のマーク価格
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _mark_list = _instance._datastore.markprice.find()
 
@@ -462,7 +469,8 @@ class ExchangeManager(AsyncManager):
             全銘柄分の最新のクローズ価格
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _close_list = _instance._datastore.ticker.find()
 
@@ -505,7 +513,7 @@ class ExchangeManager(AsyncManager):
             ポジションのUSDT建て未実現損益        
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _position_list = _instance._datastore.position.find()
         _close_series = _instance._get_latest_close()
@@ -565,8 +573,6 @@ class ExchangeManager(AsyncManager):
         """
         assert ExchangeManager._instance is not None
 
-        _instance = ExchangeManager._instance
-
         _position_df = ExchangeManager.get_position_df()
         if _position_df is None:
             if AsyncManager._logger:
@@ -598,7 +604,7 @@ class ExchangeManager(AsyncManager):
         なし。失敗した場合は例外をRaiseする
         """
         assert ExchangeManager._instance is not None
-        _instance = ExchangeManager._instance
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _table_name = ExchangeManager.get_table_name()
         
@@ -650,10 +656,10 @@ class ExchangeManager(AsyncManager):
         """
         assert ExchangeManager._instance is not None
         assert order is not None
-        _instance = ExchangeManager._instance
+        _instance: ExchangeManager = ExchangeManager._instance
 
         _sql_dict = {}
-        _table_name = ExchangeManager.get_table_name()
+        _table_name: str = ExchangeManager.get_table_name()
 
         for k, v in order.items():
             if k not in _instance._db_columns_dict:
@@ -688,9 +694,10 @@ class ExchangeManager(AsyncManager):
             raise(e)
 
 if __name__ == "__main__":
-    # 簡易的なテストコード
+    # タイムバーをダウンロードして、DBに書き込み続けるテストコード
     from os import environ
     from crypto_bot_config import pg_config, exchange_config, pybotters_apis
+
     import logging
     from logging import Logger, getLogger, basicConfig
     from rich.logging import RichHandler
@@ -703,14 +710,12 @@ if __name__ == "__main__":
     
     async def test():
         async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
-            _exchange_params = {
-                'exchange_name': exchange_config['exchange_name'],
-                'client': _client,
-                'ws_baseurl': exchange_config['ws_baseurl']
-            }
 
             await TimescaleDBManager.init_async(pg_config)
-            await ExchangeManager.init_async(_exchange_params)
+            _pybotters_params = exchange_config.copy()
+            _pybotters_params['apis'] = pybotters_apis.copy()
+            await PyBottersManager.init_async(_pybotters_params)
+            await ExchangeManager.init_async(exchange_config)
             await ExchangeManager.run_async()
 
             # 60秒待って動作を確認する

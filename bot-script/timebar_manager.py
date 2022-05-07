@@ -1,28 +1,22 @@
 import gc
 import asyncio
-from typing import Callable
-import aiohttp
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 
-import numpy as np
 import pandas as pd
 
 from logging import Logger
-from psycopg2 import Time
 
 import pybotters
 
 from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
 from exchange_manager import ExchangeManager
+from pybotters_manager import PyBottersManager
 
 class TimebarManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
     _instance: object = None
-
-    # PyBottersのインスタンスを保持するクラス変数
-    _client: pybotters.Client = None
 
     # タイムバー間隔を保持するクラス変数
     _timebar_interal = None
@@ -142,38 +136,31 @@ class TimebarManager(AsyncManager):
         -------
         なし
         """
-        assert params['client'] is not None
         assert params['timebar_interval'] is not None
 
-        self._client = params['client']
         self._timebar_interval: timedelta = params['timebar_interval']
 
     @classmethod
     async def init_async(cls, params: dict = None) -> object:
         """
-        TimebarManagerのインスタンスを作成しする非同期初期化関数
+        TimebarManagerのインスタンスを作成し初期化する関数
         
         Parameters
         ----------
-        params['client'] : pybotters.Client
-            (必須) PyBotters.Clientのインスタンス
         params['timebar_interval'] : timedelta
             (必須) このTimebarManagerで利用するタイムバーの間隔
 
         Returns
         -------
-        TimebarManager
-            TimebarManagerのインスタンス
+        なし。初期化に失敗した場合は例外をRaiseする
         """
-        assert TimebarManager._instance is None
-        assert params['client'] is not None
         assert params['timebar_interval'] is not None
 
-        AsyncManager.log_debug(f'TimebarManager._init_async()')
-
-        TimebarManager._instance = TimebarManager(params)
-        TimebarManager.init_database()
-
+        if TimebarManager._instance is not None:
+            return
+        else:
+            TimebarManager._instance: TimebarManager = TimebarManager(params)
+            TimebarManager.init_database()
         
     @classmethod
     async def run_async(cls) -> None:
@@ -190,10 +177,10 @@ class TimebarManager(AsyncManager):
         """
         assert TimebarManager._instance is not None
 
-        _instance = TimebarManager._instance
+        _instance: TimebarManager = TimebarManager._instance
 
         # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
-        asyncio.create_task(TimebarManager._instance._update_all_klines_loop_async())
+        asyncio.create_task(_instance._update_all_klines_loop_async())
 
     @classmethod
     def init_database(cls, force = False):
@@ -210,9 +197,9 @@ class TimebarManager(AsyncManager):
         なし。失敗した場合は例外をRaiseする
         """
         assert TimebarManager._instance is not None
-        _instance = TimebarManager._instance
 
-        _table_name = TimebarManager.get_table_name()
+        _instance: TimebarManager = TimebarManager._instance
+        _table_name: str = TimebarManager.get_table_name()
 
         try:
             # このマネージャー専用のデータベースの作成を試みる。すでにある場合はそのまま処理を続行する
@@ -387,6 +374,9 @@ class TimebarManager(AsyncManager):
         _retry_count = 0
         _retry_max = 3
 
+        # PyBottersクライアントのインスタンスを取得しておく
+        _client: pybotters.Client = PyBottersManager.get_client()
+
         while True:
             try:
                 _api_use_result = ExchangeManager.use_api_weight(_api_weight)
@@ -396,7 +386,7 @@ class TimebarManager(AsyncManager):
                     else:
                         _url = '/fapi/v1/klines'
 
-                    _r = await self._client.get(_url, params=_params)
+                    _r = await _client.get(_url, params = _params)
                     
                     # リクエスト結果による分岐
                     if _r.status == 200:
@@ -553,8 +543,8 @@ class TimebarManager(AsyncManager):
         なし
         """
         assert TimebarManager._instance is not None
-        _instance = TimebarManager._instance
-
+        
+        _instance: TimebarManager = TimebarManager._instance
         _last_download_second_idx = 0
 
         # self._timebar_interval足を永久に取り続けるループ
@@ -587,7 +577,6 @@ class TimebarManager(AsyncManager):
 
 if __name__ == "__main__":
     # 簡易的なテストコード
-    from os import environ
     from crypto_bot_config import pg_config, exchange_config, pybotters_apis
     import logging
     from logging import Logger, getLogger, basicConfig
@@ -600,30 +589,29 @@ if __name__ == "__main__":
     AsyncManager.set_logger(_logger)
     
     async def test():
-        async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
-            _timebar_params = {
-                'client': _client,
-                'timebar_interval': timedelta(minutes = 5)
-            }
+        # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
+        await TimescaleDBManager.init_async(pg_config)
+        
+        # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
+        _pybotters_params = exchange_config.copy()
+        _pybotters_params['apis'] = pybotters_apis.copy()
+        await PyBottersManager.init_async(_pybotters_params)
 
-            _exchange_params = {
-                'exchange_name': exchange_config['exchange_name'],
-                'client': _client,
-                'ws_baseurl': exchange_config['ws_baseurl']
-            }
+        # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
+        await ExchangeManager.init_async(exchange_config)
 
-            await TimescaleDBManager.init_async(pg_config)
-            await ExchangeManager.init_async(_exchange_params)
-            await ExchangeManager.run_async()
+        # TimebarManagerの初期化
+        _timebar_params = {
+            'timebar_interval': timedelta(minutes = 5)
+        }
+        await TimebarManager.init_async(_timebar_params)
 
-            await TimebarManager.init_async(_timebar_params)
-            await TimebarManager.run_async()
+        # タイムバーをダウンロードする非同期タスクを起動する
+        await TimebarManager.run_async()
 
-            # 60秒待って動作を確認する
-            while True:
-                await asyncio.sleep(60.0)
-
-            ExchangeManager.print_positions()
+        # 無限ループ
+        while True:
+            await asyncio.sleep(60.0)
     
     try:
         asyncio.run(test())
