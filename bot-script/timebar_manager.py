@@ -574,7 +574,7 @@ class TimebarManager(AsyncManager):
                 AsyncManager.log_info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
                 
                 # Kafkaに全シンボルのダウンロードが終わったことを
-                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed')
+                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed'.encode('utf-8'))
 
             await asyncio.sleep(1.0)
 
