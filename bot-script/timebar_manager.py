@@ -4,10 +4,8 @@ from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
-
-from logging import Logger
-
 import pybotters
+from aiokafka import AIOKafkaProducer
 
 from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
@@ -19,10 +17,7 @@ class TimebarManager(AsyncManager):
     _instance: object = None
 
     # タイムバー間隔を保持するクラス変数
-    _timebar_interal = None
-
-    # このマネージャーが利用するデータベース名を保持するクラス変数
-    _database_name = 'TimebarManager'
+    _timebar_interval = None
 
     # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
     _db_columns_dict = {
@@ -127,8 +122,6 @@ class TimebarManager(AsyncManager):
         
         Parameters
         ----------
-        params['client'] : pybotters.Client
-            (必須) PyBotters.Clientのインスタンス
         params['timebar_interval'] : timedelta
             (必須) このTimebarManagerで利用するタイムバーの間隔
 
@@ -138,7 +131,7 @@ class TimebarManager(AsyncManager):
         """
         assert params['timebar_interval'] is not None
 
-        self._timebar_interval: timedelta = params['timebar_interval']
+        TimebarManager._timebar_interval: timedelta = params['timebar_interval']
 
     @classmethod
     async def init_async(cls, params: dict = None) -> object:
@@ -161,7 +154,10 @@ class TimebarManager(AsyncManager):
         else:
             TimebarManager._instance: TimebarManager = TimebarManager(params)
             TimebarManager.init_database()
-        
+
+            TimebarManager._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
+            await TimebarManager._kafka_producer.start()
+
     @classmethod
     async def run_async(cls) -> None:
         """
@@ -203,13 +199,12 @@ class TimebarManager(AsyncManager):
 
         try:
             # このマネージャー専用のデータベースの作成を試みる。すでにある場合はそのまま処理を続行する
-            TimescaleDBManager.init_database(TimebarManager._database_name)
+            TimescaleDBManager.init_database(cls.__name__)
 
             # データベースの中にテーブルが存在しているか確認する
-            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", TimebarManager._database_name)
+            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", cls.__name__)
         except Exception as e:
-            if AsyncManager._logger:
-                AsyncManager._logger.error(f'TimebarManager.init_database(database_name = {TimebarManager._database_name}, table_name = {_table_name}) : Database init failed. Exception {e}')
+            AsyncManager.log_error(f'TimebarManager.init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Database init failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
@@ -227,10 +222,9 @@ class TimebarManager(AsyncManager):
         
         try:
             # テーブルの削除と再作成を試みる
-            TimescaleDBManager.execute_sql(_sql, TimebarManager._database_name)
+            TimescaleDBManager.execute_sql(_sql, cls.__name__)
         except Exception as e:
-            if AsyncManager._logger:
-                AsyncManager._logger.error(f'TimebarManager.init_database(database_name = {TimebarManager._database_name}, table_name = {_table_name}) : Create table failed. Exception {e}')
+            AsyncManager.log_error(f'TimebarManager.init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
             raise(e)
     
     @classmethod
@@ -258,7 +252,8 @@ class TimebarManager(AsyncManager):
 
         return f'{ExchangeManager.get_exchange_name()}_timebar_{_interval_str}'.lower()
     
-    def get_latest_timebar(self, symbol: str = None, limit: int = 1):
+    @classmethod
+    def get_latest_timebar(cls, symbol: str = None, limit: int = 1):
         """
         DB上の最新のタイムバーをlimitで指定した本数取得する
         
@@ -279,10 +274,10 @@ class TimebarManager(AsyncManager):
         assert symbol is not None
         assert limit >= 1
 
-        _table_name = self.get_table_name()
+        _table_name = cls.get_table_name()
         
         try:
-            _df = TimescaleDBManager.read_sql_query(f'SELECT * FROM "{_table_name}" WHERE symbol = \'{symbol}\' ORDER BY datetime DESC LIMIT {limit}', TimebarManager._database_name, dtype = str)
+            _df = TimescaleDBManager.read_sql_query(f'SELECT * FROM "{_table_name}" WHERE symbol = \'{symbol}\' ORDER BY datetime DESC LIMIT {limit}', cls.__name__, dtype = str)
         except Exception as e:
             AsyncManager.log_error(f'TimebarManager.get_latest_timebar(symbol = {symbol}) : Read failed. Exception {e}')
 
@@ -334,7 +329,8 @@ class TimebarManager(AsyncManager):
 
         return TimebarManager._timebar_interval_dict[_interval_sec]
 
-    async def _get_timebar_from_api_async(self, symbol: str = None, since: int = None, limit: int = 1, markprice = False):
+    @classmethod
+    async def _get_timebar_from_api_async(cls, symbol: str = None, since: int = None, limit: int = 1, markprice = False):
         """
         指定されたシンボルのタイムバー情報を取得する関数
         パラメータ
@@ -351,11 +347,11 @@ class TimebarManager(AsyncManager):
         -------
         Binanceから受信したタイムバー配列あるいはNone
         """
-        assert self._timebar_interval is not None
+        assert cls._timebar_interval is not None
 
         _params = {}
         _params['symbol'] = symbol
-        _params['interval'] = TimebarManager.get_interval_str(self._timebar_interval)
+        _params['interval'] = TimebarManager.get_interval_str(cls._timebar_interval)
         _params['limit'] = limit
         if since is not None:
             _params['startTime'] = since
@@ -394,12 +390,12 @@ class TimebarManager(AsyncManager):
                     else:
                         # 200以外は1秒待ってリトライ
                         _text = await _r.text()
-                        self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Status ({_r.status}) : {_text}')
+                        AsyncManager.log_warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Status ({_r.status}) : {_text}')
                         await asyncio.sleep(1.0)
                         _retry_count = _retry_count + 1
             except Exception as e:
                 # 例外は1秒待ってリトライ
-                self._logger.warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Exception : {e}')
+                AsyncManager.log_warning(f'TimebarManager._get_timebar_from_api_async() : {symbol} Retry. Exception : {e}')
                 await asyncio.sleep(1.0)
                 _retry_count = _retry_count + 1
             
@@ -408,7 +404,8 @@ class TimebarManager(AsyncManager):
                 return None
         return _r
 
-    async def _update_kline_db_async(self, symbol: str = None, interval: timedelta = None) -> bool:
+    @classmethod
+    async def _update_kline_db_async(cls, symbol: str = None, interval: timedelta = None) -> bool:
         """
         指定されたシンボルのタイムバー情報を取得する関数
         
@@ -426,9 +423,9 @@ class TimebarManager(AsyncManager):
         False
             新しいタイムバーはなかった
         """
-        assert self._timebar_interval is not None
+        assert cls._timebar_interval is not None
 
-        _table_name = self.get_table_name()
+        _table_name = cls.get_table_name()
 
         # 一度でも新しいバーを読み込んだかを記録するフラグ
         _updated: bool = False
@@ -441,7 +438,7 @@ class TimebarManager(AsyncManager):
         _df: pd.DataFrame = None
 
         try:
-            _df_latest: pd.DataFrame = self.get_latest_timebar(symbol, 1)
+            _df_latest: pd.DataFrame = cls.get_latest_timebar(symbol, 1)
         except Exception as e:
             AsyncManager.log_error(f'TimebarManager._update_kline_db_async() : Exception when getting the latest {symbol} timebar : {e}')
             return False
@@ -457,7 +454,7 @@ class TimebarManager(AsyncManager):
         _origin = _since
 
         while True:
-            _r = await self._get_timebar_from_api_async(symbol, _since, 499)
+            _r = await cls._get_timebar_from_api_async(symbol, _since, 499)
             if _r is None:
                 # 何らかの理由で全くデータを取得できなかったので処理を中断する
                 break
@@ -469,12 +466,12 @@ class TimebarManager(AsyncManager):
 
             _list_dict_for_timebar = []
             for _item in _list_timebar:
-                _list_dict_for_timebar.append(self._convert_timebar_list_to_timescaledb_dict(_item))
+                _list_dict_for_timebar.append(cls._convert_timebar_list_to_timescaledb_dict(_item))
             _df_timebar = pd.DataFrame.from_dict(_list_dict_for_timebar, dtype = object)
             _df_timebar.set_index('datetime', drop = True, inplace = True)
 
             # マーク価格を取得する
-            _r = await self._get_timebar_from_api_async(symbol, _since, 499, True)
+            _r = await cls._get_timebar_from_api_async(symbol, _since, 499, True)
             if _r is None:
                 # 何らかの理由で全くデータを取得できなかったので処理を中断する
                 break
@@ -486,7 +483,7 @@ class TimebarManager(AsyncManager):
 
             _list_dict_for_markprice = []
             for _item in _list_markprice:
-                _list_dict_for_markprice.append(self._convert_timebar_list_to_timescaledb_dict(_item, True))
+                _list_dict_for_markprice.append(cls._convert_timebar_list_to_timescaledb_dict(_item, True))
             _df_markprice = pd.DataFrame.from_dict(_list_dict_for_markprice, dtype = object)
             _df_markprice.set_index('datetime', drop = True, inplace = True)
 
@@ -507,7 +504,7 @@ class TimebarManager(AsyncManager):
             if len(_df) > 0:
                 try:
                     # データベースに新しいタイムバーを書き込む
-                    TimescaleDBManager.df_to_sql(_df, TimebarManager._database_name, schema = _table_name, if_exists = 'append')
+                    TimescaleDBManager.df_to_sql(_df, cls.__name__, schema = _table_name, if_exists = 'append')
                 except Exception as e:
                     # データベース書き込みで失敗したのでただちに処理を中断する。取得できていたタイムバーはDBに書き込まれない
                     AsyncManager.log_error(f'TimebarManager._update_kline_db_async() : Exception when writing {symbol} timebar to DB: {e}')
@@ -527,10 +524,13 @@ class TimebarManager(AsyncManager):
                 gc.collect()
             else:
                 break            
-
+        
+        # Kafkaにメッセージを送信する
+        await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'{symbol} : download completed')
         return _updated
     
-    async def _update_all_klines_loop_async(self):
+    @classmethod
+    async def _update_all_klines_loop_async(cls):
         """
         タイムバーの取得とDBへの保存、コールバック関数の呼び出しを一定期間おきに繰り返す無限ループ関数
 
@@ -547,7 +547,7 @@ class TimebarManager(AsyncManager):
         _instance: TimebarManager = TimebarManager._instance
         _last_download_second_idx = 0
 
-        # self._timebar_interval足を永久に取り続けるループ
+        # _timebar_interval足を永久に取り続けるループ
         while True:
             _now_timestamp = datetime.now(timezone.utc).timestamp()
             _seconds = int(_now_timestamp)
@@ -569,26 +569,23 @@ class TimebarManager(AsyncManager):
 
                 for _r in _rs:
                     if isinstance(_r, Exception):
-                        _instance._logger.warning(f'TimebarManager._update_all_klines_loop_async() : Exception raised {_r}')
+                        AsyncManager.log_warning(f'TimebarManager._update_all_klines_loop_async() : Exception raised {_r}')
 
-                _instance._logger.info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
-            
+                AsyncManager.log_info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
+                
+                # Kafkaに全シンボルのダウンロードが終わったことを
+                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed')
+
             await asyncio.sleep(1.0)
 
 if __name__ == "__main__":
     # 簡易的なテストコード
     from crypto_bot_config import pg_config, exchange_config, pybotters_apis
-    import logging
-    from logging import Logger, getLogger, basicConfig
-    from rich.logging import RichHandler
-
-    _richhandler = RichHandler(rich_tracebacks = True)
-    _richhandler.setFormatter(logging.Formatter('%(message)s'))
-    basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
-    _logger: Logger = getLogger('rich')
-    AsyncManager.set_logger(_logger)
     
     async def test():
+        # AsyncManagerの初期化
+        await AsyncManager.init_async()
+
         # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
         await TimescaleDBManager.init_async(pg_config)
         
