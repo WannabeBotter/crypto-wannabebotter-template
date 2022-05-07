@@ -65,6 +65,14 @@ services:
       - PGADMIN_LISTEN_PORT=8000
       - PGADMIN_DEFAULT_EMAIL=wannabebotter@wannabebotter.com
       - PGADMIN_DEFAULT_PASSWORD=wannabebotter
+    
+  kafka:
+    image: spotify/kafka
+    container_name: kafka
+    restart: always
+    ports:
+      - "2181:2181"
+      - "9092:9092"
 
 # 各コンテナが利用するディスクスペースの宣言
 volumes:
