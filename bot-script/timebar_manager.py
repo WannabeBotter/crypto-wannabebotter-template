@@ -531,10 +531,7 @@ class TimebarManager(AsyncManager):
 
                 gc.collect()
             else:
-                break            
-        
-        # Kafkaにメッセージを送信する
-        await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'{symbol} : download completed'.encode('utf-8'))
+                break        
         return _updated
     
     @classmethod
@@ -588,7 +585,7 @@ class TimebarManager(AsyncManager):
 
 if __name__ == "__main__":
     # 簡易的なテストコード
-    from crypto_bot_config import pg_config, exchange_config, pybotters_apis
+    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
     
     async def test():
         # AsyncManagerの初期化
@@ -598,12 +595,13 @@ if __name__ == "__main__":
         await TimescaleDBManager.init_async(pg_config)
         
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _pybotters_params = exchange_config.copy()
+        _exchange_config = binance_config.copy()
+        _pybotters_params = _exchange_config.copy()
         _pybotters_params['apis'] = pybotters_apis.copy()
         await PyBottersManager.init_async(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        await ExchangeManager.init_async(exchange_config)
+        await ExchangeManager.init_async(_exchange_config)
 
         # TimebarManagerの初期化
         _timebar_params = {

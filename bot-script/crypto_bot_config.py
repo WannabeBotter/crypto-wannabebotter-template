@@ -8,10 +8,16 @@ pg_config = {
     'port': environ['POSTGRES_PORT']
 }
 
-exchange_config = {
+binance_testnet_config = {
     'exchange_name': 'binanceusdm(testnet)',
     'rest_baseurl': 'https://testnet.binancefuture.com',
     'ws_baseurl': 'wss://stream.binancefuture.com',
+}
+
+binance_config = {
+    'exchange_name': 'binanceusdm',
+    'rest_baseurl': 'https://fapi.binance.com',
+    'ws_baseurl': 'wss://fstream.binance.com',
 }
 
 # PyBottersのパラメータ
