@@ -488,6 +488,14 @@ class TimebarManager(AsyncManager):
             _df_markprice.set_index('datetime', drop = True, inplace = True)
 
             _df = _df_timebar.join(_df_markprice, how = 'inner', sort = True)
+
+            if _df.empty == True and _df_timebar.empty == False and _df_markprice.empty == False:
+                # _df_timebarと_df_markpriceの時間がズレているので_dfがemptyになっている
+                # sinceを調整して再チャレンジする
+                _start_timebar = int(_df_timebar.index[0].timestamp() * 1000)
+                _start_markprice = int(_df_markprice.index[0].timestamp() * 1000)
+                _since = max(_start_timebar, _start_markprice) - 1
+                continue    
             
             _df['quote_lqd_volume'] = Decimal(0)
             _df['quote_lqd_buy_volume'] = Decimal(0)
