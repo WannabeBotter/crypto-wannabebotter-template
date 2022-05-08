@@ -488,6 +488,14 @@ class TimebarManager(AsyncManager):
             _df_markprice.set_index('datetime', drop = True, inplace = True)
 
             _df = _df_timebar.join(_df_markprice, how = 'inner', sort = True)
+
+            if _df.empty == True and _df_timebar.empty == False and _df_markprice.empty == False:
+                # _df_timebarと_df_markpriceの時間がズレているので_dfがemptyになっている
+                # sinceを調整して再チャレンジする
+                _start_timebar = int(_df_timebar.index[0].timestamp() * 1000)
+                _start_markprice = int(_df_markprice.index[0].timestamp() * 1000)
+                _since = max(_start_timebar, _start_markprice) - 1
+                continue    
             
             _df['quote_lqd_volume'] = Decimal(0)
             _df['quote_lqd_buy_volume'] = Decimal(0)
@@ -523,10 +531,7 @@ class TimebarManager(AsyncManager):
 
                 gc.collect()
             else:
-                break            
-        
-        # Kafkaにメッセージを送信する
-        await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'{symbol} : download completed')
+                break        
         return _updated
     
     @classmethod
@@ -574,13 +579,13 @@ class TimebarManager(AsyncManager):
                 AsyncManager.log_info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
                 
                 # Kafkaに全シンボルのダウンロードが終わったことを
-                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed')
+                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed'.encode('utf-8'))
 
             await asyncio.sleep(1.0)
 
 if __name__ == "__main__":
     # 簡易的なテストコード
-    from crypto_bot_config import pg_config, exchange_config, pybotters_apis
+    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
     
     async def test():
         # AsyncManagerの初期化
@@ -590,12 +595,13 @@ if __name__ == "__main__":
         await TimescaleDBManager.init_async(pg_config)
         
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _pybotters_params = exchange_config.copy()
+        _exchange_config = binance_config.copy()
+        _pybotters_params = _exchange_config.copy()
         _pybotters_params['apis'] = pybotters_apis.copy()
         await PyBottersManager.init_async(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        await ExchangeManager.init_async(exchange_config)
+        await ExchangeManager.init_async(_exchange_config)
 
         # TimebarManagerの初期化
         _timebar_params = {
