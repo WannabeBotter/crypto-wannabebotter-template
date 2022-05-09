@@ -16,7 +16,7 @@ class TimescaleDBManager(AsyncManager):
     # 非同期タスクを中断するためのフラグ
     _abort_async: bool = None
 
-    def __init__(self, params: dict = None, logger: Logger = None):
+    def __init__(self, params: dict = None):
         """
         TimescaleDBManagerコンストラクタ。外部から直接呼ばれることはない
         
@@ -32,8 +32,6 @@ class TimescaleDBManager(AsyncManager):
             (必須) TimeScaleDBのホスト名
         params['port'] : str
             (必須) TimeScaleDBのポート番号
-        logger : Logger
-            ロガー
 
         Returns
         -------
@@ -58,47 +56,14 @@ class TimescaleDBManager(AsyncManager):
         _sqlalchemy_config = f"postgresql+psycopg2://{params['user']}:{params['password']}@{params['host']}:{params['port']}/postgres"
         self._engines['postgres'] = create_engine(_sqlalchemy_config, pool_pre_ping = True)
 
-        #_sqlalchemy_config = f"postgresql+psycopg2://{params['user']}:{params['password']}@{params['host']}:{params['port']}/{params['database']}"
-
-        if logger:
-            self._logger = logger
+        TimescaleDBManager._instance = self
     
-    @classmethod
-    async def init_async(cls, params: dict = None, logger: Logger = None) -> None:
-        """
-        TimescaleDBManagerの初期化関数
-        
-        Parameters
-        ----------
-        params : dict
-            (必須) 初期化パラメータが入った辞書。内容は__init__を参照
-        logger : Logger
-            ロガー
-
-        Returns
-        -------
-        なし。失敗した場合は例外をRaiseする
-        """
-        if TimescaleDBManager._instance is not None:
-            return
-        else:
-            TimescaleDBManager._instance: TimescaleDBManager = TimescaleDBManager(params, logger)
-
     @classmethod
     async def run_async(cls) -> None:
         """
-        このマネージャーの非同期タスクループ起動用メソッド
-        
-        Parameters
-        ----------
-        なし
-
-        Returns
-        -------
-        なし。失敗した場合は例外をRaiseする。
+        このマネージャーの非同期タスクループ起動用メソッド。利用しない。
         """
-        # 今のところ非同期バックグラウンドタスクはないので空の関数としておく
-        return
+        pass
 
     @classmethod
     def init_database(cls, db_name: str = None, force: bool = False) -> None:

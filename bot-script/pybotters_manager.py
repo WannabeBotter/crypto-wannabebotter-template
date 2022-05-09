@@ -28,26 +28,8 @@ class PyBottersManager(AsyncManager):
         assert params['apis'] is not None
 
         PyBottersManager._client = pybotters.Client(base_url = params['rest_baseurl'], apis = params['apis'])
+        PyBottersManager._instance = self
 
-    @classmethod
-    async def init_async(cls, params: dict = None) -> object:
-        """
-        PyBottersManagerのインスタンスを作成し、初期化する関数
-        
-        Parameters
-        ----------
-        なし
-
-        Returns
-        -------
-        なし
-        """
-
-        if PyBottersManager._instance is not None:
-            return
-        else:
-            PyBottersManager._instance: PyBottersManager = PyBottersManager(params)
-    
     @classmethod
     def get_client(cls) -> pybotters.Client:
         return PyBottersManager._client
@@ -55,17 +37,9 @@ class PyBottersManager(AsyncManager):
     @classmethod
     async def run_async(cls) -> None:
         """
-        このマネージャーの非同期タスクループ起動用メソッド
-        
-        Parameters
-        ----------
-        なし
-
-        Returns
-        -------
-        なし。失敗した場合は例外をRaiseする。
+        このマネージャーの非同期タスクループ起動用メソッド。利用しない。
         """
-        return
+        pass
 
     @classmethod
     def get_table_name(cls) -> str:
