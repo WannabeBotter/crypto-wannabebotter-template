@@ -20,9 +20,12 @@ PyPortfolioOpt
 memory_profiler
 line_profiler
 psutil
-plotly
 git+https://github.com/MtkN1/pybotters.git@develop
 rich
 python-logging-discord-handler
 sqlalchemy_utils
 aiokafka
+dash
+numpy
+seaborn
+plotly
