@@ -131,32 +131,10 @@ class TimebarManager(AsyncManager):
         """
         assert params['timebar_interval'] is not None
 
-        TimebarManager._timebar_interval: timedelta = params['timebar_interval']
-
-    @classmethod
-    async def init_async(cls, params: dict = None) -> object:
-        """
-        TimebarManagerのインスタンスを作成し初期化する関数
-        
-        Parameters
-        ----------
-        params['timebar_interval'] : timedelta
-            (必須) このTimebarManagerで利用するタイムバーの間隔
-
-        Returns
-        -------
-        なし。初期化に失敗した場合は例外をRaiseする
-        """
-        assert params['timebar_interval'] is not None
-
-        if TimebarManager._instance is not None:
-            return
-        else:
-            TimebarManager._instance: TimebarManager = TimebarManager(params)
+        if TimebarManager._instance is None:
+            TimebarManager._timebar_interval: timedelta = params['timebar_interval']
+            TimebarManager._instance = self
             TimebarManager.init_database()
-
-            TimebarManager._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
-            await TimebarManager._kafka_producer.start()
 
     @classmethod
     async def run_async(cls) -> None:
@@ -174,6 +152,10 @@ class TimebarManager(AsyncManager):
         assert TimebarManager._instance is not None
 
         _instance: TimebarManager = TimebarManager._instance
+
+        # Kafka producerを起動する
+        TimebarManager._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
+        await TimebarManager._kafka_producer.start()
 
         # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
         asyncio.create_task(_instance._update_all_klines_loop_async())
@@ -586,28 +568,35 @@ class TimebarManager(AsyncManager):
 if __name__ == "__main__":
     # 簡易的なテストコード
     from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
-    
+    from logging import Logger, getLogger, basicConfig, Formatter
+    import logging
+    from rich.logging import RichHandler
+
     async def test():
         # AsyncManagerの初期化
-        await AsyncManager.init_async()
+        _richhandler = RichHandler(rich_tracebacks = True)
+        _richhandler.setFormatter(logging.Formatter('%(message)s'))
+        basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+        _logger: Logger = getLogger('rich')
+        AsyncManager.set_logger(_logger)
 
         # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
-        await TimescaleDBManager.init_async(pg_config)
+        TimescaleDBManager(pg_config)
         
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
         _exchange_config = binance_config.copy()
         _pybotters_params = _exchange_config.copy()
         _pybotters_params['apis'] = pybotters_apis.copy()
-        await PyBottersManager.init_async(_pybotters_params)
+        PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        await ExchangeManager.init_async(_exchange_config)
+        ExchangeManager(_exchange_config)
 
         # TimebarManagerの初期化
         _timebar_params = {
             'timebar_interval': timedelta(minutes = 5)
         }
-        await TimebarManager.init_async(_timebar_params)
+        TimebarManager(_timebar_params)
 
         # タイムバーをダウンロードする非同期タスクを起動する
         await TimebarManager.run_async()

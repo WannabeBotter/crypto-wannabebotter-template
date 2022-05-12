@@ -72,67 +72,36 @@ class ExchangeManager(AsyncManager):
         assert params['exchange_name'] is not None
         assert params['ws_baseurl'] is not None
 
-        self._exchange_name: str = params['exchange_name']
-        self._ws_baseurl: str = params['ws_baseurl']
+        if ExchangeManager._instance is None:
+            self._exchange_name: str = params['exchange_name']
+            self._ws_baseurl: str = params['ws_baseurl']
 
-        # 取引所情報の辞書
-        self._exchange_info: dict = None
+            # 取引所情報の辞書
+            self._exchange_info: dict = None
 
-        # 全USDTパーペチュアル銘柄を保持するset
-        self._all_symbols: set = None
+            # 全USDTパーペチュアル銘柄を保持するset
+            self._all_symbols: set = None
 
-        # トレード時の最小ロット数・最大ロット数・ロット単位を記録する辞書
-        self._maxlot_series: pd.Series = None
-        self._minlot_series: pd.Series = None
-        self._stepsize_series: pd.Series = None
+            # トレード時の最小ロット数・最大ロット数・ロット単位を記録する辞書
+            self._maxlot_series: pd.Series = None
+            self._minlot_series: pd.Series = None
+            self._stepsize_series: pd.Series = None
 
-        # 最新のマーク価格とクローズ価格を保持するSeries
-        self._latest_close_series = None
-        self._latest_mark_series = None
+            # 最新のマーク価格とクローズ価格を保持するSeries
+            self._latest_close_series = None
+            self._latest_mark_series = None
 
-        # APIのウェイト管理用
-        self._api_weight = 0
-        self._api_last_reset_idx = 0
+            # APIのウェイト管理用
+            self._api_weight = 0
+            self._api_last_reset_idx = 0
 
-        # データストアの初期化
-        self._datastore = pybotters.BinanceDataStore()
+            # データストアの初期化
+            self._datastore = pybotters.BinanceDataStore()
 
-    @classmethod
-    async def init_async(cls, params: dict = None) -> None:
-        """
-        ExchangeManagerのインスタンスを作成し、初期化する関数
-        
-        Parameters
-        ----------
-        params : dict
-            (必須) 初期化パラメータが入った辞書
-        params['exchange_name'] : str
-            (必須) DBアクセス時に利用する取引所名
-        params['timebar_interval'] : timedelta
-            (必須) この取引所で利用する時間足
-        params['client'] : pybotters.Client
-            (必須) PyBotters.Clientのインスタンス
-        params['ws_baseurl'] : str
-            (必須) WebsocketAPIのベースURL
-
-        Returns
-        -------
-        なし。初期化に失敗した場合は例外をRaiseする
-        """
-        assert params['exchange_name'] is not None
-        assert params['ws_baseurl'] is not None
-
-        if ExchangeManager._instance is not None:
-            return
-        else:
-            AsyncManager.log_debug(f"ExchangeManager.init_async(exchage_name = '{params['exchange_name']}')")
-
-            ExchangeManager._instance: ExchangeManager = ExchangeManager(params)
+            # データベースの初期化とインスタンスの保存
+            ExchangeManager._instance = self
             ExchangeManager.init_database()
-            
-            # 取引所の情報を更新する
-            await ExchangeManager._instance.update_exchangeinfo_async()
-    
+
     @classmethod
     async def run_async(cls) -> None:
         """
@@ -150,6 +119,11 @@ class ExchangeManager(AsyncManager):
 
         _instance: ExchangeManager = ExchangeManager._instance
         _client: pybotters.Client = PyBottersManager.get_client()
+
+        assert _client is not None
+
+        # 取引所情報を取得する
+        await ExchangeManager._instance.update_exchangeinfo_async()
 
         # データストアを初期化する
         await _instance._datastore.initialize(
@@ -184,6 +158,8 @@ class ExchangeManager(AsyncManager):
 
         _instance: ExchangeManager = ExchangeManager._instance
         _client: pybotters.Client = PyBottersManager.get_client()
+
+        assert _client is not None
 
         # 取引所情報をREST APIから取得する。リトライ回数は無限
         while True:

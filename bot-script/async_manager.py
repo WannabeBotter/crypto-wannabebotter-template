@@ -63,26 +63,6 @@ class AsyncManager(ABC):
     
     @classmethod
     @abstractmethod
-    async def init_async(cls) -> None:
-        """
-        AsyncManagerの初期化用抽象メソッド
-        
-        Parameters
-        ----------
-        なし
-
-        Returns
-        -------
-        なし。失敗した場合は例外をRaiseする。
-        """
-        # Loggerの設定
-        _richhandler = RichHandler(rich_tracebacks = True)
-        _richhandler.setFormatter(logging.Formatter('%(message)s'))
-        basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
-        AsyncManager._logger: Logger = getLogger('rich')
-
-    @classmethod
-    @abstractmethod
     def init_database(cls, force: bool):
         """
         このマネージャーが利用するDBとテーブルの初期化用抽象メソッド
@@ -102,7 +82,7 @@ class AsyncManager(ABC):
     @abstractmethod
     def get_table_name(cls) -> str:
         """
-        このマネージャーが使うテーブル名を取得する関数
+        このマネージャーが使うテーブル名を取得する抽象メソッド
         
         Parameters
         ----------
