@@ -58,6 +58,7 @@ def update_graph_live(n):
     _df_timebar['deviation'] = (_df_timebar['close'] - _df_timebar['mark_close']) / _df_timebar['mark_close'] * 100
     _df_deviation = _df_timebar.pivot(index = 'datetime', columns = 'symbol', values='deviation')
     _df_deviation.drop('BTCSTUSDT', axis = 1, inplace = True)
+    _df_deviation.sort_values(axis = 'columns', by = _df_deviation.index[-1], inplace = True)
 
     _rows = 16
     _columns = len(_df_deviation.columns) // 16 + 1
