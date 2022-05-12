@@ -10,8 +10,6 @@ class PyBottersManager(AsyncManager):
     # PyBottersのインスタンスを保持するクラス変数
     _client: pybotters.Client = None
 
-    client: pybotters.Client = None
-
     def __init__(self, params):
         """
         TimebarManagerコンストラクタ
