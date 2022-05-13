@@ -35,7 +35,8 @@ services:
     depends_on:
       - wait-for-db
     ports:
-      - "8888:8888"
+      - "8888:8888" # Jupyter用ポート
+      - "8050:8050" # Dash用ポート
     volumes:
       - jupyter_volume:/home/jovyan/work # /home/jovyan/workに以下のファイルしかディスクには保存されないことに注意
     environment:
@@ -98,9 +99,34 @@ services:
       - KAFKA_CLUSTERS_0_NAME=local
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
       - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181     
+  
+  ftp_server:
+    image: stilliard/pure-ftpd:latest
+    container_name: ftp_server
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    volumes:
+      - ftp_volume:/home/ftpusers
+    environment:
+      - PUBLICHOST=localhost
+      - ADDED_FLAGS="--tls=2"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  mlflow:
+    build: ./mlflow
+    image: mlflow-image
+    container_name: mlflow
+    restart: unless-stopped
+    ports:
+      - "8891:8890"
+    command: mlflow server --host 0.0.0.0 --port 8890 --backend-store-uri "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/mlflow" --default-artifact-root "ftp://${FTP_USER_NAME}:${FTP_USER_PASS}@${FTP_HOST}/artifacts"
 
 # 各コンテナが利用するディスクスペースの宣言
 volumes:
   timescaledb_volume:
   jupyter_volume:
   pgadmin_volume:
+  ftp_volume:
