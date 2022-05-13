@@ -584,12 +584,12 @@ if __name__ == "__main__":
         TimescaleDBManager(pg_config)
         
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _exchange_config = binance_config.copy()
-        _pybotters_params = _exchange_config.copy()
+        _pybotters_params = binance_config.copy()
         _pybotters_params['apis'] = pybotters_apis.copy()
         PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
+        _exchange_config = binance_config.copy()
         ExchangeManager(_exchange_config)
 
         # TimebarManagerの初期化
