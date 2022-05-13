@@ -42,21 +42,21 @@ class TimescaleDBManager(AsyncManager):
         assert params['password'] is not None
         assert params['host'] is not None
         assert params['port'] is not None
-        assert TimescaleDBManager._instance is None
 
-        # ユーザー等の値を保存しておく
-        self._user = params['user']
-        self._password = params['password']
-        self._host = params['host']
-        self._port = params['port']
-        
-        # DB接続をデータベース名ごとに格納する辞書
-        self._engines: dict = {}
+        if TimescaleDBManager._instance is None:
+            # ユーザー等の値を保存しておく
+            self._user = params['user']
+            self._password = params['password']
+            self._host = params['host']
+            self._port = params['port']
+            
+            # DB接続をデータベース名ごとに格納する辞書
+            self._engines: dict = {}
 
-        _sqlalchemy_config = f"postgresql+psycopg2://{params['user']}:{params['password']}@{params['host']}:{params['port']}/postgres"
-        self._engines['postgres'] = create_engine(_sqlalchemy_config, pool_pre_ping = True)
+            _sqlalchemy_config = f"postgresql+psycopg2://{params['user']}:{params['password']}@{params['host']}:{params['port']}/postgres"
+            self._engines['postgres'] = create_engine(_sqlalchemy_config, pool_pre_ping = True)
 
-        TimescaleDBManager._instance = self
+            TimescaleDBManager._instance = self
     
     @classmethod
     async def run_async(cls) -> None:
