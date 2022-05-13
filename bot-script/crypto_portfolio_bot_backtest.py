@@ -461,13 +461,13 @@ def objective(trial):
     _params = params.copy()
     
     if _params['debug'] == False:
-        #_params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 2, 24, 2) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
-        #_params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 4
+        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 2, 24, 2) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
+        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 4 # リバランス間隔の1/4の時間でウェイト調整を終える
         _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
         _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
-        #_params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
-        #_params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
-        #_params['components_select_period'] = trial.suggest_int('components_select_period', 2, 8, 2)
+        _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
+        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
+        _params['components_select_period'] = _params['weight_calc_period']
             
     _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = target_function(_params)
     return _max_usdt_value, _sharpe
@@ -482,12 +482,12 @@ args = parser.parse_args()
 
 # 実験のパラメータ
 params_base = {
-    'experiment_name': 'int_4h_cost_0.006_l2reg_0.01-0.1_riska_0.1_4',
+    'experiment_name': 'int_2h-24h_cost_0.006_l2reg_0.01-0.1_riska_0.1_4',
     'backtest_from': '2022-04-01 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
     'backtest_to': '2023-01-01 00:00:00+00',
     'efficientfrontier_type': 'EfficientMeanVariance',
     'objective_type': 'max_quadratic_utility',
-    'l2_reg_gamma': 0.05,
+    'l2_reg_gamma': 0.03,
     'execution_cost': 0.006,                 # トレード手数料
     'debug': args.debug,                     # 規定値のパラメータを使ったデバッグを行うフラグ
     'debug_sinusdt': args.debugsinusdt,      # 価格系列としてsinusdt / sin2usdtを利用するフラグ
