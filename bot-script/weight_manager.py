@@ -20,6 +20,7 @@ from pypfopt import objective_functions
 
 from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
+from pybotters_manager import PyBottersManager
 from exchange_manager import ExchangeManager
 from timebar_manager import TimebarManager
 
@@ -181,9 +182,9 @@ class WeightManager(AsyncManager):
                         AsyncManager.log_info(f'consumed: {msg.topic}, {msg.partition}, {msg.offset}, {msg.key}, {msg.value}, {msg.timestamp}')
 
                 # 時間足がアップデートされているので、ウェイト計算を行う
-                self._calc_weight()
+                await self._calc_weight()
 
-    def _prepare_dataframes(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    async def _prepare_dataframes(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         TimebarManagerから受け取ったタイムバーのDataFrameをポートフォリオ計算に利用するデータフレームに変換して返す
         
@@ -199,6 +200,11 @@ class WeightManager(AsyncManager):
         _df_dollar_volume_sma : pd.DataFrame
             全銘柄のドル建て取引ボリュームの移動平均が入ったDataFrame （行は時間で列は銘柄）
         """
+        # 取引可能な銘柄だけを抽出
+        await ExchangeManager.update_exchangeinfo_async()
+        _all_symbols = ExchangeManager.get_all_symbols()
+
+
         # dfにUSDT/USDTを追加
         _unique_datetime = df['datetime'].unique()
         _df_usdt = pd.DataFrame(index=_unique_datetime, columns= ['symbol', 'close']).rename_axis('datetime').reset_index()
@@ -210,13 +216,15 @@ class WeightManager(AsyncManager):
 
         # ポートフォリオ計算に利用するクローズとボリューム用のデータフレームを準備
         _df_close = df.pivot(index = 'datetime', columns = 'symbol', values = 'close').astype(float)
+        _df_close = _df_close.loc[:, _all_symbols]
         _df_quote_volume = df.pivot(index = 'datetime', columns = 'symbol', values='quote_volume').astype(float).fillna(0)
         _necessary_rows = int(self._rebalance_calc_range.total_seconds() // TimebarManager._timebar_interval.total_seconds())
-        _df_dollar_volume_sma = _df_quote_volume.apply(lambda rows: talib.SMA(rows, _necessary_rows))
+        _df_quote_volume_sma = _df_quote_volume.apply(lambda rows: talib.SMA(rows, _necessary_rows))
+        _df_quote_volume_sma = _df_quote_volume_sma.loc[:, _all_symbols]
 
-        return (_df_close, _df_dollar_volume_sma)
+        return (_df_close,  _df_quote_volume_sma)
 
-    def _calc_weight(self):
+    async def _calc_weight(self):
         _now_datetime = datetime.now(timezone.utc)
         _now_timestamp = _now_datetime.timestamp()
         _rebalance_idx: int = int(_now_timestamp // self._rebalance_interval.total_seconds())
@@ -225,7 +233,7 @@ class WeightManager(AsyncManager):
         _flag_rebalance = _rebalance_idx != self._last_rebalance_idx or self._weights is None
 
         if _flag_rebalance is False:
-            AsyncManager.log_debug('WeightManager._calc_weight() : Skipping this timebar')
+            AsyncManager.log_info('WeightManager._calc_weight() : Skipping this timebar')
             return
         
         # ウェイト計算の実行に必要なデータフレームを作成
@@ -238,7 +246,7 @@ class WeightManager(AsyncManager):
             AsyncManager.log_error(f'WeightManager.calc_portfolio_weight() : Cannot read timebar from DB. {e}')
             return
         
-        _df_close, _df_quote_volume_sma = self._prepare_dataframes(_df)
+        _df_close, _df_quote_volume_sma = await self._prepare_dataframes(_df)
 
         # まだポートフォリオ計算に必要なclose系列の長さがない場合は、USDT 100%のウェイトを_df_target_weightに設定してウェイト計算を終了する
         _necessary_rows = int(self._rebalance_calc_range.total_seconds() // TimebarManager._timebar_interval.total_seconds())
@@ -316,7 +324,7 @@ class WeightManager(AsyncManager):
 
 if __name__ == "__main__":
     # 簡易的なテストコード
-    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
+    from crypto_bot_config import pg_config, binance_config, pybotters_apis
     from logging import Logger, getLogger, basicConfig, Formatter
     import logging
     from rich.logging import RichHandler
@@ -331,6 +339,11 @@ if __name__ == "__main__":
 
         # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
         TimescaleDBManager(pg_config)
+
+        # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
+        _pybotters_params = binance_config.copy()
+        _pybotters_params['apis'] = pybotters_apis.copy()
+        PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
         _exchange_config = binance_config.copy()
