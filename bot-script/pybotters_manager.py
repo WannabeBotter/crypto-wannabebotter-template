@@ -24,9 +24,10 @@ class PyBottersManager(AsyncManager):
         """
         assert params['rest_baseurl'] is not None
         assert params['apis'] is not None
-
-        PyBottersManager._client = pybotters.Client(base_url = params['rest_baseurl'], apis = params['apis'])
-        PyBottersManager._instance = self
+        
+        if PyBottersManager._instance is None:
+            PyBottersManager._client = pybotters.Client(base_url = params['rest_baseurl'], apis = params['apis'])
+            PyBottersManager._instance = self
 
     @classmethod
     def get_client(cls) -> pybotters.Client:
