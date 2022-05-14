@@ -9,7 +9,6 @@ import numpy as np
 
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from aiokafka.errors import OffsetOutOfRangeError
-from psycopg2 import DatabaseError
 
 import talib
 
@@ -27,6 +26,12 @@ from timebar_manager import TimebarManager
 class WeightManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
     _instance: object = None
+
+    _db_columns_dict = {
+        'dt': ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
+        's': ('symbol', 'TEXT', 'NOT NULL'),
+        'w': ('weight', 'NUMERIC', 'NOT NULL')
+    }
 
     def __init__(self, params: dict = None):
         """
@@ -68,10 +73,11 @@ class WeightManager(AsyncManager):
             self._rebalance_interval: timedelta = params['rebalance_interval']
             self._rebalance_calc_range: timedelta = params['rebalance_calc_range']
 
-            self._weights: dict = None
+            self._weights: pd.Series = None
             self._last_rebalance_idx = 0
 
             WeightManager._instance = self
+            WeightManager.init_database()
     
     @classmethod
     def get_table_name(cls) -> str:
@@ -86,7 +92,12 @@ class WeightManager(AsyncManager):
         ----------
         テーブル名 : str
         """
-        return 'weight_log'
+        assert WeightManager._instance is not None
+        assert TimebarManager._instance._timebar_interval is not None
+
+        _interval_str = TimebarManager.get_interval_str(TimebarManager._timebar_interval)
+
+        return f'{ExchangeManager.get_exchange_name()}_weight'.lower()
 
     @classmethod
     def init_database(cls, force = False):
@@ -126,7 +137,7 @@ class WeightManager(AsyncManager):
         
         # 目標ウェイト記録テーブルを作成
         _sql = (f'DROP TABLE IF EXISTS "{_table_name}" CASCADE;'
-                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str});'
+                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str}, UNIQUE(datetime, symbol));'
                 f' CREATE INDEX ON "{_table_name}" (datetime DESC);'
                 f" SELECT create_hypertable ('{_table_name}', 'datetime');")
         
@@ -184,7 +195,7 @@ class WeightManager(AsyncManager):
                 # 時間足がアップデートされているので、ウェイト計算を行う
                 await self._calc_weight()
 
-    async def _prepare_dataframes(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    async def _prepare_dataframes(self, df: pd.DataFrame = None, rows: int = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         TimebarManagerから受け取ったタイムバーのDataFrameをポートフォリオ計算に利用するデータフレームに変換して返す
         
@@ -200,10 +211,12 @@ class WeightManager(AsyncManager):
         _df_dollar_volume_sma : pd.DataFrame
             全銘柄のドル建て取引ボリュームの移動平均が入ったDataFrame （行は時間で列は銘柄）
         """
-        # 取引可能な銘柄だけを抽出
+        assert df is not None
+        assert rows is not None
+
+        # 取引可能な銘柄だけを抽出するために、取引可能なシンボルを取得
         await ExchangeManager.update_exchangeinfo_async()
         _all_symbols = ExchangeManager.get_all_symbols()
-
 
         # dfにUSDT/USDTを追加
         _unique_datetime = df['datetime'].unique()
@@ -222,7 +235,7 @@ class WeightManager(AsyncManager):
         _df_quote_volume_sma = _df_quote_volume.apply(lambda rows: talib.SMA(rows, _necessary_rows))
         _df_quote_volume_sma = _df_quote_volume_sma.loc[:, _all_symbols]
 
-        return (_df_close,  _df_quote_volume_sma)
+        return (_df_close.iloc[-rows:, :],  _df_quote_volume_sma.iloc[-rows:, :])
 
     async def _calc_weight(self):
         _now_datetime = datetime.now(timezone.utc)
@@ -239,19 +252,19 @@ class WeightManager(AsyncManager):
         # ウェイト計算の実行に必要なデータフレームを作成
         _to_datetime = datetime.fromtimestamp(_rebalance_idx * self._rebalance_interval.total_seconds(), tz = timezone.utc)
         _from_datetime = _to_datetime - self._rebalance_calc_range
-        _sql = f'SELECT datetime, symbol, close, quote_volume FROM {self._timebar_table_name} WHERE datetime > \'{_from_datetime}\' AND datetime <= \'{_to_datetime}\' ORDER BY datetime ASC, symbol ASC'
+        _sql = f'SELECT datetime, symbol, close, quote_volume FROM {self._timebar_table_name} WHERE datetime BETWEEN \'{_from_datetime}\' AND \'{_to_datetime}\' ORDER BY datetime ASC, symbol ASC'
         try:
             _df = TimescaleDBManager.read_sql_query(_sql, self._timebar_db_name)
         except Exception as e:
             AsyncManager.log_error(f'WeightManager.calc_portfolio_weight() : Cannot read timebar from DB. {e}')
             return
         
-        _df_close, _df_quote_volume_sma = await self._prepare_dataframes(_df)
+        _necessary_rows = int(self._rebalance_calc_range.total_seconds() // TimebarManager._timebar_interval.total_seconds())
+        _df_close, _df_quote_volume_sma = await self._prepare_dataframes(_df, _necessary_rows)
 
         # まだポートフォリオ計算に必要なclose系列の長さがない場合は、USDT 100%のウェイトを_df_target_weightに設定してウェイト計算を終了する
-        _necessary_rows = int(self._rebalance_calc_range.total_seconds() // TimebarManager._timebar_interval.total_seconds())
-        if _df_close.shape[0] < _necessary_rows:
-            AsyncManager.log_warning(f'WeightManager._calc_weight() : Short dataframe is given. {_df_close.shape}.')
+        if _df_close.shape[0] != _necessary_rows:
+            AsyncManager.log_warning(f'WeightManager._calc_weight() : Short or long dataframe is given. {_df_close.shape}.')
             _all_symbols = _df_close.columns.unique()
             self._weights = pd.Series(Decimal(0), index = _all_symbols)
             self._weights['USDTUSDT'] = Decimal(1)
@@ -312,14 +325,16 @@ class WeightManager(AsyncManager):
                 self._weights = self._weights / self._weights.abs().sum()
             
             self._last_rebalance_idx = _rebalance_idx
+
+            # ウェイトをDBに記録する
+            _df = self._weights.to_frame().reset_index()
+            _df.columns = ['symbol', 'weight']
+            _df.loc[:, 'datetime'] = _to_datetime
+
+            TimescaleDBManager.df_to_sql(_df, 'WeightManager', self.get_table_name(), 'append')
+
             AsyncManager.log_info(f'WeightManager._calc_weight() : new weight = {self._weights[self._weights != 0]}')
-
-
-        
-
-
-
-
+            AsyncManager.log_info(f'WeightManager._calc_weight() : new weight abs sum = {np.sum(np.abs(self._weights))}')
 
 
 if __name__ == "__main__":
@@ -355,14 +370,13 @@ if __name__ == "__main__":
         }
         TimebarManager(_timebar_params)
 
-
         wm_config = {
             'timebar_db_name': 'TimebarManager',
             'timebar_table_name': 'binanceusdm_timebar_5m',
             'components_count': 16,
             'risk_aversion': 2.0,
             'l2_gamma': 0.02,
-            'rebalance_interval': timedelta(hours = 4),
+            'rebalance_interval': timedelta(minutes = 5),
             'rebalance_calc_range': timedelta(days = 2)
         }
             
