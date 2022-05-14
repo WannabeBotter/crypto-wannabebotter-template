@@ -655,36 +655,37 @@ class ExchangeManager(AsyncManager):
             raise(e)
 
 if __name__ == "__main__":
-    # タイムバーをダウンロードして、DBに書き込み続けるテストコード
-    from os import environ
-    from crypto_bot_config import pg_config, exchange_config, pybotters_apis
-
+    # タイムバーのダウンロードをトリガーにウェイトを計算するプログラム
+    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
+    from logging import Logger, getLogger, basicConfig, Formatter
     import logging
-    from logging import Logger, getLogger, basicConfig
     from rich.logging import RichHandler
 
-    _richhandler = RichHandler(rich_tracebacks = True)
-    _richhandler.setFormatter(logging.Formatter('%(message)s'))
-    basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
-    _logger: Logger = getLogger('rich')
-    AsyncManager.set_logger(_logger)
-    
-    async def test():
-        async with pybotters.Client(base_url = exchange_config['rest_baseurl'], apis = pybotters_apis) as _client:
+    async def async_task():
+        # AsyncManagerの初期化
+        _richhandler = RichHandler(rich_tracebacks = True)
+        _richhandler.setFormatter(logging.Formatter('%(message)s'))
+        basicConfig(level = logging.INFO, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+        _logger: Logger = getLogger('rich')
+        AsyncManager.set_logger(_logger)
 
-            await TimescaleDBManager.init_async(pg_config)
-            _pybotters_params = exchange_config.copy()
-            _pybotters_params['apis'] = pybotters_apis.copy()
-            await PyBottersManager.init_async(_pybotters_params)
-            await ExchangeManager.init_async(exchange_config)
-            await ExchangeManager.run_async()
+        # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
+        TimescaleDBManager(pg_config)
 
-            # 60秒待って動作を確認する
+        # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
+        _pybotters_params = binance_config.copy()
+        _pybotters_params['apis'] = pybotters_apis.copy()
+        PyBottersManager(_pybotters_params)
+
+        # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
+        _exchange_config = binance_config.copy()
+        ExchangeManager(_exchange_config)
+        ExchangeManager.run_async()
+
+        while True:
             await asyncio.sleep(60.0)
 
-            ExchangeManager.print_positions()
-    
     try:
-        asyncio.run(test())
+        asyncio.run(async_task())
     except KeyboardInterrupt:
         pass
