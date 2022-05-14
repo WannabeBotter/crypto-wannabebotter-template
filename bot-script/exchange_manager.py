@@ -17,6 +17,7 @@ class ExchangeManager(AsyncManager):
 
     # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
     _db_columns_dict = {
+        'dt': ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
         's': ('symbol', 'TEXT', 'NOT NULL'),
         'c': ('client_order_id', 'TEXT', 'NOT NULL'),
         'S': ('side', 'TEXT', 'NOT NULL'),
@@ -590,7 +591,7 @@ class ExchangeManager(AsyncManager):
         
         # 目標ウェイト記録テーブルを作成
         _sql = (f'DROP TABLE IF EXISTS "{_table_name}" CASCADE;'
-                f' CREATE TABLE IF NOT EXISTS "{_table_name}" (datetime TIMESTAMP WITH TIME ZONE NOT NULL, {_columns_str});'
+                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str});'
                 f' CREATE INDEX ON "{_table_name}" (datetime DESC);'
                 f" SELECT create_hypertable ('{_table_name}', 'datetime');")
         
