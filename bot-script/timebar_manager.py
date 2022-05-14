@@ -566,13 +566,13 @@ class TimebarManager(AsyncManager):
             await asyncio.sleep(1.0)
 
 if __name__ == "__main__":
-    # 簡易的なテストコード
+    # タイムバーをダウンロードし続けるコード
     from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
     from logging import Logger, getLogger, basicConfig, Formatter
     import logging
     from rich.logging import RichHandler
 
-    async def test():
+    async def async_task():
         # AsyncManagerの初期化
         _richhandler = RichHandler(rich_tracebacks = True)
         _richhandler.setFormatter(logging.Formatter('%(message)s'))
@@ -592,7 +592,7 @@ if __name__ == "__main__":
         _exchange_config = binance_config.copy()
         ExchangeManager(_exchange_config)
 
-        # TimebarManagerの初期化
+        # TimebarManagerの初期化。ダウンロードするタイムバーの間隔はここで決定できる
         _timebar_params = {
             'timebar_interval': timedelta(minutes = 5)
         }
@@ -606,6 +606,6 @@ if __name__ == "__main__":
             await asyncio.sleep(60.0)
     
     try:
-        asyncio.run(test())
+        asyncio.run(async_task())
     except KeyboardInterrupt:
         pass
