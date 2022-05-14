@@ -198,7 +198,7 @@ class TimebarManager(AsyncManager):
         
         # 目標ウェイト記録テーブルを作成
         _sql = (f'DROP TABLE IF EXISTS "{_table_name}" CASCADE;'
-                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str});'
+                f' CREATE TABLE IF NOT EXISTS "{_table_name}" ({_columns_str}, UNIQUE(datetime, symbol));'
                 f' CREATE INDEX ON "{_table_name}" (datetime DESC);'
                 f" SELECT create_hypertable ('{_table_name}', 'datetime');")
         
@@ -223,14 +223,9 @@ class TimebarManager(AsyncManager):
         テーブル名 : str
         """
         assert TimebarManager._instance is not None
-        assert TimebarManager._instance._timebar_interval is not None
+        assert TimebarManager._timebar_interval is not None
 
-        _keys = list(cls._timebar_interval_dict.keys())
-        _interval_sec: int = int(TimebarManager._instance._timebar_interval.total_seconds())
-
-        assert _interval_sec in _keys, f"get_table_name(): {_interval_sec} is not in {_keys}"
-
-        _interval_str = cls._timebar_interval_dict[_interval_sec]
+        _interval_str = cls.get_interval_str(TimebarManager._timebar_interval)
 
         return f'{ExchangeManager.get_exchange_name()}_timebar_{_interval_str}'.lower()
     
