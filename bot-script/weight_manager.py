@@ -338,13 +338,13 @@ class WeightManager(AsyncManager):
 
 
 if __name__ == "__main__":
-    # 簡易的なテストコード
-    from crypto_bot_config import pg_config, binance_config, pybotters_apis
+    # タイムバーのダウンロードをトリガーにウェイトを計算するプログラム
+    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
     from logging import Logger, getLogger, basicConfig, Formatter
     import logging
     from rich.logging import RichHandler
 
-    async def test():
+    async def async_task():
         # AsyncManagerの初期化
         _richhandler = RichHandler(rich_tracebacks = True)
         _richhandler.setFormatter(logging.Formatter('%(message)s'))
@@ -387,6 +387,6 @@ if __name__ == "__main__":
             await asyncio.sleep(60.0)
 
     try:
-        asyncio.run(test())
+        asyncio.run(async_task())
     except KeyboardInterrupt:
         pass
