@@ -200,7 +200,11 @@ class TimescaleDBManager(AsyncManager):
         assert schema is not None
         assert TimescaleDBManager._instance is not None
         
-        return df.to_sql(schema, con = TimescaleDBManager._instance._engines[db_name], if_exists = if_exists, index = False)
+        try:
+            return df.to_sql(schema, con = TimescaleDBManager._instance._engines[db_name], if_exists = if_exists, index = False)
+        except BaseException as e:
+            AsyncManager.log_error(f'TimescaleDBManager.df_to_sql : {e}')
+            return 0
 
 if __name__ == "__main__":
     # 簡易的なテストコード
