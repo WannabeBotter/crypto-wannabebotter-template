@@ -2,7 +2,6 @@ import asyncio
 from decimal import Decimal
 from datetime import datetime, timezone
 from logging import Logger
-from datetime import timedelta
 
 import pandas as pd
 
@@ -169,12 +168,10 @@ class ExchangeManager(AsyncManager):
                     break
                 else:
                     # 200以外は1秒待ってリトライ
-                    if AsyncManager._logger:
-                        AsyncManager._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Non 200 status {_r.status}')
+                    AsyncManager.log_warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Non 200 status {_r.status}')
                     await asyncio.sleep(1.0)
             except BaseException as e:
-                if AsyncManager._logger:
-                    AsyncManager._logger.warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Exception {e}')
+                AsyncManager.log_warning(f'ExchangeManager.update_exchangeinfo_async() : Retry. Exception {e}')
                 await asyncio.sleep(1.0)
 
         _instance._exchange_info = await _r.json()
@@ -237,17 +234,14 @@ class ExchangeManager(AsyncManager):
                         break
                     else:
                         # 200以外は1秒待ってリトライ
-                        if AsyncManager._logger:
-                            AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. Non 200 status {_r.status}')
+                        AsyncManager.log_warning(f'ExchangeManager.update_position_async() : Retry. Non 200 status {_r.status}')
                         await asyncio.sleep(1.0)
                 else:
                     # APIを呼び出しすぎている
-                    if AsyncManager._logger:
-                        AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. API weight shortage.')
+                    AsyncManager.log_warning(f'ExchangeManager.update_position_async() : Retry. API weight shortage.')
                     await asyncio.sleep(1.0)
             except BaseException as e:
-                if AsyncManager._logger:
-                    AsyncManager._logger.warning(f'ExchangeManager.update_position_async() : Retry. Exception {e}')
+                AsyncManager.log_warning(f'ExchangeManager.update_position_async() : Retry. Exception {e}')
                 await asyncio.sleep(1.0)
 
     @classmethod
@@ -270,8 +264,7 @@ class ExchangeManager(AsyncManager):
 
         while True:
             _events = await _instance._datastore.order.wait()
-            if AsyncManager._logger:
-                AsyncManager._logger.info(f'ExchangeManager._order_update_loop_async() : Pybotters datastore event received\n{_events}')
+            AsyncManager.log_info(f'ExchangeManager._order_update_loop_async() : Pybotters datastore event received\n{_events}')
             for _event in _events:
                 TimescaleDBManager.log_order_update(_table_name, _event)
     
@@ -494,8 +487,7 @@ class ExchangeManager(AsyncManager):
         _close_index_set = set(_close_series.index.values)
 
         if len(_position_list) == 0:
-            if AsyncManager._logger:
-                AsyncManager._logger.warning(f'ExchangeManager.get_position() : Position data is not avalable yet. Abort.')
+            AsyncManager.log_warning(f'ExchangeManager.get_position() : Position data is not avalable yet. Abort.')
             return None
         
         _position_dict = {}
@@ -548,8 +540,7 @@ class ExchangeManager(AsyncManager):
 
         _position_df = ExchangeManager.get_position_df()
         if _position_df is None:
-            if AsyncManager._logger:
-                AsyncManager._logger.warning(f'ExchangeManager.print_position() : Position data is not avalable yet. Abort.')
+            AsyncManager.log_warning(f'ExchangeManager.print_position() : Position data is not avalable yet. Abort.')
             return
 
         _cw_usdt_balance = ExchangeManager.get_usdt_cw_margin()
@@ -557,10 +548,9 @@ class ExchangeManager(AsyncManager):
         _total_abs_usdt_value = _position_df.loc[:, 'abs_usdt_value'].sum()
         _total_unrealized_pnl = _position_df.loc[:, 'unrealized_pnl'].sum()
 
-        if AsyncManager._logger:
-            AsyncManager._logger.info(f'ExchangeManager.print_position()')
-            AsyncManager._logger.info(_position_df[_position_df['amount'] != 0])
-            AsyncManager._logger.info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
+        AsyncManager.log_info(f'ExchangeManager.print_position()')
+        AsyncManager.log_info(_position_df[_position_df['amount'] != 0])
+        AsyncManager.log_info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
     
     @classmethod
     def init_database(cls, force = False):
@@ -588,8 +578,7 @@ class ExchangeManager(AsyncManager):
             # テーブルが存在しているか確認する
             _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", cls.__name__)
         except Exception as e:
-            if AsyncManager._logger:
-                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
+            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
@@ -609,8 +598,7 @@ class ExchangeManager(AsyncManager):
             # テーブルの削除と再作成を試みる            
             TimescaleDBManager.execute_sql(_sql, cls.__name__)
         except Exception as e:
-            if AsyncManager._logger:
-                AsyncManager._logger.error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
+            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
             raise(e)
 
     @classmethod
@@ -662,8 +650,7 @@ class ExchangeManager(AsyncManager):
         try:
             TimescaleDBManager.execute_sql(_sql)
         except Exception as e:
-            if AsyncManager._logger:
-                AsyncManager._logger.error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
+            AsyncManager.log_error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
             raise(e)
 
 if __name__ == "__main__":
