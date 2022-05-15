@@ -228,7 +228,8 @@ class ExchangeManager(AsyncManager):
         while True:
             try:
                 if await ExchangeManager.use_api_weight_async(5) == True:
-                    _r = await _instance.client.get('/fapi/v2/positionRisk')
+                    _client = PyBottersManager.get_client()
+                    _r = await _client.get('/fapi/v2/positionRisk')
                     if _r.status == 200:
                         _data = await _r.json()
                         _instance._datastore.position._onresponse(_data)
@@ -244,6 +245,39 @@ class ExchangeManager(AsyncManager):
             except BaseException as e:
                 AsyncManager.log_warning(f'ExchangeManager.update_position_async() : Retry. Exception {e}')
                 await asyncio.sleep(1.0)
+    
+    @classmethod
+    async def use_api_weight_async(cls, weight: int) -> bool:        
+        """
+        API利用のために必要な残ウェイトが残っているか否かを判定する関数
+        
+        Parameters
+        ----------
+        weight : int, 必須
+            利用したいウェイト数
+        timebar_list : list, 必須
+            取得するタイムバーの最大数。デフォルト値=1
+        
+        Returns
+        ----------
+        True
+            残ウェイトが十分でAPIコールができる
+        False
+            残ウェイトが足りずAPIコールをしてはならない
+        """
+        assert weight > 0
+        assert ExchangeManager._instance is not None
+
+        _instance: ExchangeManager = ExchangeManager._instance
+
+        _now_idx = int(datetime.now(tz = timezone.utc).timestamp()) // _instance._api_weight_reset_interval_sec
+        if _now_idx > _instance._api_last_reset_idx:
+            _instance._api_last_reset_idx = _now_idx
+            _instance._api_weight = _instance._api_weight_reset_value
+        if _instance._api_weight < weight:
+            return False
+        _instance._api_weight -= weight
+        return True
 
     @classmethod
     async def _order_update_loop_async(cls):
@@ -359,7 +393,7 @@ class ExchangeManager(AsyncManager):
         _instance: ExchangeManager = ExchangeManager._instance
 
         _balance = _instance._datastore.balance.find({'a': 'USDT'})
-        if _balance is not None:
+        if _balance is not None and len(_balance) > 0:
             cw_usdt_balance = Decimal(_balance[0]['cw'])
         else:
             cw_usdt_balance = Decimal(0)
@@ -577,9 +611,9 @@ class ExchangeManager(AsyncManager):
             TimescaleDBManager.init_database('ExchangeManager')
 
             # テーブルが存在しているか確認する
-            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", cls.__name__)
+            _df = TimescaleDBManager.read_sql_query(f"select * from information_schema.tables where table_name='{_table_name}'", ExchangeManager.__name__)
         except Exception as e:
-            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
+            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {ExchangeManager.__name__}, table_name = {_table_name}) : Table initialization failed. Exception {e}')
             raise(e)
         
         if len(_df.index) > 0 and force == False:
@@ -597,9 +631,9 @@ class ExchangeManager(AsyncManager):
         
         try:
             # テーブルの削除と再作成を試みる            
-            TimescaleDBManager.execute_sql(_sql, cls.__name__)
+            TimescaleDBManager.execute_sql(_sql, ExchangeManager.__name__)
         except Exception as e:
-            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {cls.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
+            AsyncManager.log_error(f'ExchangeManager._init_database(database_name = {ExchangeManager.__name__}, table_name = {_table_name}) : Create table failed. Exception {e}')
             raise(e)
 
     @classmethod
@@ -673,12 +707,12 @@ if __name__ == "__main__":
         TimescaleDBManager(pg_config)
 
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _pybotters_params = binance_config.copy()
+        _pybotters_params = binance_testnet_config.copy()
         _pybotters_params['apis'] = pybotters_apis.copy()
         PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        _exchange_config = binance_config.copy()
+        _exchange_config = binance_testnet_config.copy()
         ExchangeManager(_exchange_config)
         ExchangeManager.run_async()
 
