@@ -27,10 +27,11 @@ class WeightManager(AsyncManager):
     # グローバル共有のインスタンスを保持するクラス変数
     _instance: object = None
 
+    # DB内のカラム名の対象用の辞書
     _db_columns_dict = {
-        'dt': ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
-        's': ('symbol', 'TEXT', 'NOT NULL'),
-        'w': ('weight', 'NUMERIC', 'NOT NULL')
+        0: ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
+        1: ('symbol', 'TEXT', 'NOT NULL'),
+        2: ('weight', 'NUMERIC', 'NOT NULL')
     }
 
     def __init__(self, params: dict = None):
@@ -45,7 +46,7 @@ class WeightManager(AsyncManager):
             (必須) タイムバーを読み込むデータベース名
         params['timebar_table_name'] : str
             (必須) タイムバーを読み込むテーブル名
-        params['components_count'] : int
+        params['components_num'] : int
             (必須) ポートフォリオに含まれる銘柄数
         params['risk_aversion'] : float
             (必須) リスク回避度
@@ -58,16 +59,18 @@ class WeightManager(AsyncManager):
         """
         assert params['timebar_db_name'] is not None
         assert params['timebar_table_name'] is not None
-        assert params['components_count'] is not None
+        assert params['components_num'] is not None
         assert params['risk_aversion'] is not None
         assert params['l2_gamma'] is not None
         assert params['rebalance_interval'] is not None
         assert params['rebalance_calc_range'] is not None
+        assert params['prohibit_symbol'] is not None
 
         if WeightManager._instance is None:
+            self._prohibit_symbol: list = params['prohibit_symbol']
             self._timebar_db_name: str = params['timebar_db_name']
             self._timebar_table_name: str = params['timebar_table_name']
-            self._components_count: int = params['components_count']
+            self._components_num: int = params['components_num']
             self._risk_aversion: float = params['risk_aversion']
             self._l2_gamma: float = params['l2_gamma']
             self._rebalance_interval: timedelta = params['rebalance_interval']
@@ -97,7 +100,7 @@ class WeightManager(AsyncManager):
 
         _interval_str = TimebarManager.get_interval_str(TimebarManager._timebar_interval)
 
-        return f'{ExchangeManager.get_exchange_name()}_weight'.lower()
+        return f'{ExchangeManager.get_exchange_name()}_weight_{_interval_str}'.lower()
 
     @classmethod
     def init_database(cls, force = False):
@@ -130,8 +133,7 @@ class WeightManager(AsyncManager):
         
         if len(_df.index) > 0 and force == False:
             return
-                
-        # テーブルそのものがないケース
+
         _columns_str_list = [f'{v[0]} {v[1]} {v[2]}' for k, v in _instance._db_columns_dict.items()]
         _columns_str = ', '.join(_columns_str_list)
         
@@ -151,7 +153,7 @@ class WeightManager(AsyncManager):
     @classmethod
     async def run_async(cls) -> None:
         """
-        TimebarManagerの非同期タスクループ起動用メソッド
+        WeightManagerの非同期タスクループ起動用メソッド
         
         Parameters
         ----------
@@ -172,10 +174,21 @@ class WeightManager(AsyncManager):
         cls._kafka_consumer = AIOKafkaConsumer('TimebarManager', bootstrap_servers = 'kafka:9092', group_id = 'group')
         await cls._kafka_consumer.start()
 
-        # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
+        # オーダー情報をwebsocketから受け取りウェイト計算をする非同期タスクを起動する
         asyncio.create_task(_instance._wait_timebar_async())
     
     async def _wait_timebar_async(self):
+        """
+        WeightManagerの非同期タスクループメソッド
+        
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし。失敗した場合は例外をRaiseする。
+        """
         while True:
             try:
                 _msg_dict = await self._kafka_consumer.getmany(timeout_ms=100)
@@ -238,6 +251,17 @@ class WeightManager(AsyncManager):
         return (_df_close.iloc[-rows:, :],  _df_quote_volume_sma.iloc[-rows:, :])
 
     async def _calc_weight(self):
+        """
+        ウェイト計算メソッド
+        
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし。失敗した場合は例外をRaiseする。
+        """
         _now_datetime = datetime.now(timezone.utc)
         _now_timestamp = _now_datetime.timestamp()
         _rebalance_idx: int = int(_now_timestamp // self._rebalance_interval.total_seconds())
@@ -255,6 +279,7 @@ class WeightManager(AsyncManager):
         _sql = f'SELECT datetime, symbol, close, quote_volume FROM {self._timebar_table_name} WHERE datetime BETWEEN \'{_from_datetime}\' AND \'{_to_datetime}\' ORDER BY datetime ASC, symbol ASC'
         try:
             _df = TimescaleDBManager.read_sql_query(_sql, self._timebar_db_name)
+            _df = _df.loc[~_df['symbol'].isin(self._prohibit_symbol), :]
         except Exception as e:
             AsyncManager.log_error(f'WeightManager.calc_portfolio_weight() : Cannot read timebar from DB. {e}')
             return
@@ -274,7 +299,7 @@ class WeightManager(AsyncManager):
         if _flag_rebalance:
             # 平均取引ボリュームに基づいて銘柄を選択する
             _volume_rank = _df_quote_volume_sma.iloc[-1].rank(ascending = False)
-            self._components = list(_volume_rank[_volume_rank <= self._components_count].index.values)
+            self._components = list(_volume_rank[_volume_rank <= self._components_num].index.values)
             AsyncManager.log_info(f'WeightManager._calc_weight() : Components update performed.\n{self._components}')
 
             # タイムバーから全シンボルを取得し、ウェイト用のSeriesを準備
@@ -330,16 +355,20 @@ class WeightManager(AsyncManager):
             _df = self._weights.to_frame().reset_index()
             _df.columns = ['symbol', 'weight']
             _df.loc[:, 'datetime'] = _to_datetime
+            _df = _df[_df['weight'] != 0]
 
+            # TimescaleDBにウェイトを記録
             TimescaleDBManager.df_to_sql(_df, 'WeightManager', self.get_table_name(), 'append')
+
+            # Kafkaにウェイトが更新されたシグナルを送信
+            await WeightManager._kafka_producer.send_and_wait(self.__class__.__name__, f'Weight updated'.encode('utf-8'))
 
             AsyncManager.log_info(f'WeightManager._calc_weight() : new weight = {self._weights[self._weights != 0]}')
             AsyncManager.log_info(f'WeightManager._calc_weight() : new weight abs sum = {np.sum(np.abs(self._weights))}')
 
-
 if __name__ == "__main__":
     # タイムバーのダウンロードをトリガーにウェイトを計算するプログラム
-    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis
+    from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis, wm_config
     from logging import Logger, getLogger, basicConfig, Formatter
     import logging
     from rich.logging import RichHandler
@@ -370,16 +399,6 @@ if __name__ == "__main__":
         }
         TimebarManager(_timebar_params)
 
-        wm_config = {
-            'timebar_db_name': 'TimebarManager',
-            'timebar_table_name': 'binanceusdm_timebar_5m',
-            'components_count': 16,
-            'risk_aversion': 2.0,
-            'l2_gamma': 0.02,
-            'rebalance_interval': timedelta(minutes = 5),
-            'rebalance_calc_range': timedelta(days = 2)
-        }
-            
         WeightManager(wm_config)
         await WeightManager.run_async()
 
