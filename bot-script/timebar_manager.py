@@ -19,6 +19,27 @@ class TimebarManager(AsyncManager):
     # タイムバー間隔を保持するクラス変数
     _timebar_interval = None
 
+    # 秒をTimescaleDBとBinance APIで利用できるタイムバー間隔に変換するためのdict
+    _timebar_interval_dict = {
+        60: '1m',
+        180: '3m',
+        300: '5m',
+        900: '15m',
+        1800: '30m',
+        3600: '1h',
+        7200: '2h',
+        14400: '4h',
+        28800: '8h',
+        43200: '12h',
+        86400: '1d',
+        259200: '3d',
+        604800: '7d',
+        2419200: '1M', # 1 month = 28 days
+        2505600: '1M', # 1 month = 29 days
+        2592000: '1M', # 1 month = 30 days
+        2678400: '1M', # 1 month = 31 days
+    }
+
     # オーダーイベントの辞書キーとDB内のカラム名の対象用の辞書
     _db_columns_dict = {
         0: ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
@@ -52,26 +73,6 @@ class TimebarManager(AsyncManager):
         204: ('quote_buy_volume_cumsum', 'NUMERIC', 'NOT NULL') # USDT建て
     }
 
-    # 秒をTimescaleDBとBinance APIで利用できるタイムバー間隔に変換するためのdict
-    _timebar_interval_dict = {
-        60: '1m',
-        180: '3m',
-        300: '5m',
-        900: '15m',
-        1800: '30m',
-        3600: '1h',
-        7200: '2h',
-        14400: '4h',
-        28800: '8h',
-        43200: '12h',
-        86400: '1d',
-        259200: '3d',
-        604800: '7d',
-        2419200: '1M', # 1 month = 28 days
-        2505600: '1M', # 1 month = 29 days
-        2592000: '1M', # 1 month = 30 days
-        2678400: '1M', # 1 month = 31 days
-    }
         
     @classmethod
     def _convert_timebar_list_to_timescaledb_dict(self, timebar_list: list = None, markprice = False) -> dict:
@@ -191,8 +192,7 @@ class TimebarManager(AsyncManager):
         
         if len(_df.index) > 0 and force == False:
             return
-                
-        # テーブルそのものがないケース
+        
         _columns_str_list = [f'{v[0]} {v[1]} {v[2]}' for k, v in _instance._db_columns_dict.items()]
         _columns_str = ', '.join(_columns_str_list)
         
@@ -555,8 +555,8 @@ class TimebarManager(AsyncManager):
 
                 AsyncManager.log_info(f'TimebarManager._update_all_klines_loop_async() : Download completed')
                 
-                # Kafkaに全シンボルのダウンロードが終わったことを
-                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'ALL : download completed'.encode('utf-8'))
+                # Kafkaに全シンボルのダウンロードが終わったことを告知
+                await TimebarManager._kafka_producer.send_and_wait(cls.__name__, f'Download completed'.encode('utf-8'))
 
             await asyncio.sleep(1.0)
 
