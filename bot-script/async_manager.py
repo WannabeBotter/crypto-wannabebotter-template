@@ -76,7 +76,7 @@ class AsyncManager(ABC):
         ----------
         なし。失敗した場合は例外をRaiseする
         """
-        pass      
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -92,7 +92,7 @@ class AsyncManager(ABC):
         ----------
         テーブル名 : str
         """
-        pass
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -108,4 +108,4 @@ class AsyncManager(ABC):
         -------
         なし。失敗した場合は例外をRaiseする。
         """
-        pass
+        raise NotImplementedError
