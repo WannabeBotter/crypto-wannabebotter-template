@@ -123,7 +123,7 @@ class ExchangeManager(AsyncManager):
         assert _client is not None
 
         # 取引所情報を取得する
-        await ExchangeManager._instance.update_exchangeinfo_async()
+        await ExchangeManager.update_exchangeinfo_async()
 
         # データストアを初期化する
         await _instance._datastore.initialize(
@@ -189,13 +189,13 @@ class ExchangeManager(AsyncManager):
         _instance._api_weight_reset_interval_sec = _instance._exchange_info['rateLimits'][0]['intervalNum'] * 60
 
         # 銘柄ごとの最小注文量、最大注文量、注文ステップを更新
-        _instance.maxlot_series = pd.Series(dtype = object)
-        _instance.minlot_series = pd.Series(dtype = object)
-        _instance.stepsize_series = pd.Series(dtype = object)
+        _instance._maxlot_series = pd.Series(dtype = object)
+        _instance._minlot_series = pd.Series(dtype = object)
+        _instance._stepsize_series = pd.Series(dtype = object)
 
-        _instance.maxlot_series['USDTUSDT'] = Decimal(10000000.0)
-        _instance.minlot_series['USDTUSDT'] = Decimal(0.01)
-        _instance.stepsize_series['USDTUSDT'] = Decimal(0.01)
+        _instance._maxlot_series['USDTUSDT'] = Decimal(10000000.0)
+        _instance._minlot_series['USDTUSDT'] = Decimal(0.01)
+        _instance._stepsize_series['USDTUSDT'] = Decimal(0.01)
 
         _instance._symbol_lotinfo = {}
         for _symbol in _instance._exchange_info['symbols']:
@@ -203,9 +203,10 @@ class ExchangeManager(AsyncManager):
                 _symbol_str = _symbol['symbol']
                 for _filter in _symbol['filters']:
                     if _filter['filterType'] == 'MARKET_LOT_SIZE':
-                        _instance.maxlot_series[_symbol_str] = Decimal(_filter['maxQty'])
-                        _instance.minlot_series[_symbol_str] = Decimal(_filter['minQty'])
-                        _instance.stepsize_series[_symbol_str] = Decimal(_filter['stepSize'])
+                        _instance._maxlot_series[_symbol_str] = Decimal(_filter['maxQty'])
+                        _instance._minlot_series[_symbol_str] = Decimal(_filter['minQty'])
+                        _instance._stepsize_series[_symbol_str] = Decimal(_filter['stepSize'])
+                        break
     
     @classmethod
     async def update_position_async(cls) -> None:
@@ -227,7 +228,7 @@ class ExchangeManager(AsyncManager):
 
         while True:
             try:
-                if await ExchangeManager.use_api_weight_async(5) == True:
+                if await ExchangeManager.use_api_weight(5) == True:
                     _client = PyBottersManager.get_client()
                     _r = await _client.get('/fapi/v2/positionRisk')
                     if _r.status == 200:
@@ -247,7 +248,7 @@ class ExchangeManager(AsyncManager):
                 await asyncio.sleep(1.0)
     
     @classmethod
-    async def use_api_weight_async(cls, weight: int) -> bool:        
+    def use_api_weight(cls, weight: int) -> bool:        
         """
         API利用のために必要な残ウェイトが残っているか否かを判定する関数
         
@@ -301,7 +302,7 @@ class ExchangeManager(AsyncManager):
             _events = await _instance._datastore.order.wait()
             AsyncManager.log_info(f'ExchangeManager._order_update_loop_async() : Pybotters datastore event received\n{_events}')
             for _event in _events:
-                TimescaleDBManager.log_order_update(_table_name, _event)
+                ExchangeManager.log_order_update(_event)
     
     @classmethod
     def get_exchange_name(cls) -> str:
@@ -340,39 +341,6 @@ class ExchangeManager(AsyncManager):
         _instance: ExchangeManager = ExchangeManager._instance
 
         return f'{_instance._exchange_name}_order_log'.lower()
-
-    @classmethod
-    def use_api_weight(cls, weight: int = 0) -> bool:        
-        """
-        API利用のために必要な残ウェイトが残っているか否かを判定する関数
-        
-        Parameters
-        ----------
-        weight : int
-            (必須) 利用したいウェイト数
-        
-        Returns
-        ----------
-        True
-            残ウェイトが十分でAPIコールができる
-        False
-            残ウェイトが足りずAPIコールをしてはならない
-        """
-        assert weight > 0
-        assert ExchangeManager._instance is not None
-        
-        _instance: ExchangeManager = ExchangeManager._instance
-
-        _now_idx = int(datetime.now(tz = timezone.utc).timestamp()) // _instance._api_weight_reset_interval_sec
-        if _now_idx > _instance._api_last_reset_idx:
-            _instance._api_last_reset_idx = _now_idx
-            _instance._api_weight = _instance._api_weight_reset_value
-        if _instance._api_weight < weight:
-            AsyncManager.log_warning('ExchangeManager.use_api_weight() : Too many API call')
-            return False
-        
-        _instance._api_weight -= weight
-        return True
     
     @classmethod
     def get_usdt_cw_margin(cls) -> Decimal:
@@ -400,6 +368,20 @@ class ExchangeManager(AsyncManager):
 
         return cw_usdt_balance
     
+    @classmethod
+    def get_trade_stepsize(cls, symbol: str = None):
+        assert ExchangeManager._instance is not None
+        assert symbol is not None
+
+        return ExchangeManager._instance._stepsize_series[symbol]
+
+    @classmethod
+    def get_trade_minlot(cls, symbol: str = None):
+        assert ExchangeManager._instance is not None
+        assert symbol is not None
+
+        return ExchangeManager._instance._minlot_series[symbol]
+
     @classmethod
     def get_all_symbols(cls) -> set:
         """
@@ -687,6 +669,63 @@ class ExchangeManager(AsyncManager):
         except Exception as e:
             AsyncManager.log_error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
             raise(e)
+
+    @classmethod
+    def log_order_update(cls, order: dict = None):
+        """
+        DB上のオーダー情報を追加する
+        
+        Parameters
+        ----------
+        order : dict
+            (必須) 記録するオーダーそのもの
+
+        Returns
+        ----------
+        True
+            追加に成功した
+        False
+            追加に失敗した
+        """
+        assert order is not None
+
+        _sql_dict = {}
+        _db_columns_dict = ExchangeManager._db_columns_dict
+        _table_name = ExchangeManager.get_table_name()
+
+        for k, v in order.items():
+            if k not in _db_columns_dict:
+                continue
+            
+            _type = _db_columns_dict[k][1]
+            if _type == 'NUMERIC':
+                _sql_dict[_db_columns_dict[k][0]] = Decimal(v)
+            elif _type == 'BIGINT':
+                _sql_dict[_db_columns_dict[k][0]] = int(v)
+            elif _type == 'TIMESTAMP':
+                _sql_dict[_db_columns_dict[k][0]] = f'\'{datetime.fromtimestamp(v / 1000, tz = timezone.utc)}\''
+            elif _type == 'BOOLEAN':
+                _sql_dict[_db_columns_dict[k][0]] = v
+            else:
+                _sql_dict[_db_columns_dict[k][0]] = f'\'{v.lower()}\''
+            
+        _sql_dict['datetime'] = _sql_dict['order_trade_time']
+
+        _columns_list = [f'{_column.lower()}' for _column in _sql_dict.keys()]
+        _columns_str = ', '.join(_columns_list)
+        _values_list = [f'{_value}' for _value in _sql_dict.values()]
+        _values_str = ', '.join(_values_list)
+
+        _sql = f'insert into "{_table_name}" ({_columns_str}) values ({_values_str})'
+        
+        try:
+            TimescaleDBManager.execute_sql(_sql, cls.__name__)
+        except Exception as e:
+            AsyncManager.log_error(f'TimescaleDBManager.log_order_update(table_name = {_table_name}, order = {order}) : Insert failed. Exception {e}')
+            return False
+        
+        return True
+
 
 if __name__ == "__main__":
     # タイムバーのダウンロードをトリガーにウェイトを計算するプログラム
