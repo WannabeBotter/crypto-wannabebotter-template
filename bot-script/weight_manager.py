@@ -208,7 +208,7 @@ class WeightManager(AsyncManager):
                 # 時間足がアップデートされているので、ウェイト計算を行う
                 await self._calc_weight()
 
-    async def _prepare_dataframes(self, df: pd.DataFrame = None, rows: int = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    async def _prepare_dataframes(self, df: pd.DataFrame = None, necessary_rows: int = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         TimebarManagerから受け取ったタイムバーのDataFrameをポートフォリオ計算に利用するデータフレームに変換して返す
         
@@ -225,7 +225,7 @@ class WeightManager(AsyncManager):
             全銘柄のドル建て取引ボリュームの移動平均が入ったDataFrame （行は時間で列は銘柄）
         """
         assert df is not None
-        assert rows is not None
+        assert necessary_rows is not None
 
         # 取引可能な銘柄だけを抽出するために、取引可能なシンボルを取得
         await ExchangeManager.update_exchangeinfo_async()
@@ -242,13 +242,13 @@ class WeightManager(AsyncManager):
 
         # ポートフォリオ計算に利用するクローズとボリューム用のデータフレームを準備
         _df_close = df.pivot(index = 'datetime', columns = 'symbol', values = 'close').astype(float)
+        _all_symbols = list(set(_all_symbols) & set(_df_close.columns))
         _df_close = _df_close.loc[:, _all_symbols]
         _df_quote_volume = df.pivot(index = 'datetime', columns = 'symbol', values='quote_volume').astype(float).fillna(0)
-        _necessary_rows = int(self._rebalance_calc_range.total_seconds() // TimebarManager._timebar_interval.total_seconds())
-        _df_quote_volume_sma = _df_quote_volume.apply(lambda rows: talib.SMA(rows, _necessary_rows))
+        _df_quote_volume_sma = _df_quote_volume.apply(lambda rows: talib.SMA(rows, necessary_rows))
         _df_quote_volume_sma = _df_quote_volume_sma.loc[:, _all_symbols]
 
-        return (_df_close.iloc[-rows:, :],  _df_quote_volume_sma.iloc[-rows:, :])
+        return (_df_close.iloc[-necessary_rows:, :],  _df_quote_volume_sma.iloc[-necessary_rows:, :])
 
     async def _calc_weight(self):
         """
