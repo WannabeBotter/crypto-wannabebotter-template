@@ -46,6 +46,6 @@ tm_config = {
     'weight_table_name': 'binanceusdm_weight_5m',
     'weight_db_name': 'WeightManager',
     'trade_interval': timedelta(minutes = 5),
-    'rebalance_time': timedelta(minutes = 10),
-    'components_num': wm_config['components_num']
+    'rebalance_time': timedelta(minutes = 20),
+    'components_num': wm_config['components_num']    
 }
