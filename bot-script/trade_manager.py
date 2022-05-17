@@ -1,21 +1,14 @@
-import gc
 import asyncio
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone, timedelta
-from typing import Tuple
+from unicodedata import decimal
 
 import pandas as pd
-import numpy as np
 
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from aiokafka.errors import OffsetOutOfRangeError
 
-import talib
-
-from pypfopt.expected_returns import mean_historical_return, returns_from_prices
-from pypfopt.risk_models import CovarianceShrinkage
-from pypfopt.efficient_frontier import EfficientFrontier
-from pypfopt import objective_functions
+import pybotters
 
 from async_manager import AsyncManager
 from timescaledb_manager import TimescaleDBManager
@@ -30,13 +23,15 @@ class TradeManager:
 
     # DB内のカラム名の対象用の辞書
     _db_order_log_columns_dict = {
-        'order_log': {
+        'order_attempt_log': {
             0: ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
             1: ('symbol', 'TEXT', 'NOT NULL'),
             2: ('base_amount', 'NUMERIC', 'NOT NULL'),
-            3: ('latest_close', 'NUMERIC', 'NOT NULL'),
-            4: ('latest_best_bid', 'NUMERIC', 'NOT NULL'),
-            5: ('latest_best_ask', 'NUMERIC', 'NOT NULL')
+            3: ('close', 'NUMERIC', 'NOT NULL'),
+            4: ('best_bid', 'NUMERIC', 'NOT NULL'),
+            5: ('best_bid_qty', 'NUMERIC', 'NOT NULL'),
+            6: ('best_ask', 'NUMERIC', 'NOT NULL'),
+            7: ('best_ask_qty', 'NUMERIC', 'NOT NULL')
         },
         'current_weight': {
             0: ('datetime', 'TIMESTAMP', 'WITH TIME ZONE NOT NULL'),
@@ -78,17 +73,21 @@ class TradeManager:
             (必須) リバランス期間の長さ
         params['components_num'] : int
             (必須) 最大の銘柄数
+        params['ws_baseurl'] : str
+            (必須) WebsocketAPIのベースURL
         """
         assert params['weight_table_name'] is not None
         assert params['weight_db_name'] is not None
         assert params['trade_interval'] is not None
         assert params['rebalance_time'] is not None
-
+        assert params['ws_baseurl'] is not None
+        
         self._weight_table_name = params['weight_table_name']
         self._weight_db_name = params['weight_db_name']
         self._trade_interval = params['trade_interval']
         self._rebalance_time = params['rebalance_time']
         self._components_num = params['components_num']
+        self._ws_baseurl = params['ws_baseurl']
 
         # 目標ウェイト等を保存する変数を未定義状態に
         self._target_weight: pd.Series = None
@@ -97,6 +96,8 @@ class TradeManager:
 
         self._step_count: int = int(self._rebalance_time.total_seconds() // self._trade_interval.total_seconds())
         self._last_step = 0
+
+        self._datastore = pybotters.BinanceDataStore()
 
         TradeManager._instance = self
         self.init_database()
@@ -183,6 +184,15 @@ class TradeManager:
         assert TradeManager._instance is not None
 
         _instance: TradeManager = TradeManager._instance
+        _client: pybotters.Client = PyBottersManager.get_client()
+
+        assert _client is not None
+
+        # データストアを初期化する
+        await _instance._datastore.initialize()
+
+        # Best bid / askにsubscribeする
+        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!bookTicker', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
 
         # Kafka producerを起動する
         cls._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
@@ -254,7 +264,7 @@ class TradeManager:
             if len(_msg_dict) > 0 or self._target_weight is None:
                 for k, v in _msg_dict.items():
                     for msg in v:
-                        AsyncManager.log_info(f'consumed: {msg.topic}, {msg.partition}, {msg.offset}, {msg.key}, {msg.value}, {msg.timestamp}')
+                        AsyncManager.log_info(f'TradeManager._wait_timebar_async() : consumed msg {msg.topic}, {msg.partition}, {msg.offset}, {msg.key}, {msg.value}, {msg.timestamp}')
                 
                 # 目標ウェイトを更新
                 self._update_target_weight()
@@ -275,6 +285,23 @@ class TradeManager:
                 AsyncManager.log_error(f'TimescaleDBManager.log_symbols_values(table_name = {table_name}, values = {values}) : Insert failed. Exception {e}')
                 return False
         return True
+    
+    def log_order_attempt(self, now_datetime: datetime = None, symbol: str = None, base_amount: object = None, close: object = None, best_bid: object = None, best_bid_qty: object = None, best_ask: float = None, best_ask_qty: float = None):
+        _exchange_name = ExchangeManager.get_exchange_name()
+        _interval_str = TimebarManager.get_interval_str(TimebarManager._timebar_interval)
+        _table_name = f'{_exchange_name}_order_attempt_log_{_interval_str}'
+
+        try:
+            _sql = f'insert into "{_table_name}" (datetime, symbol, base_amount, close, best_bid, best_bid_qty, best_ask, best_ask_qty) values (\'{now_datetime}\', \'{symbol}\', {base_amount}, {close}, {best_bid}, {best_bid_qty}, {best_ask}, {best_ask_qty})'
+            TimescaleDBManager.execute_sql(_sql, self.__class__.__name__)
+        except Exception as e:
+            AsyncManager.log_error(f'TradeManager.log_order_attempt(\'{now_datetime}\', \'{symbol}\', {base_amount}, {close}, {best_bid}, {best_bid_qty}, {best_ask}, {best_ask_qty}) : Insert failed. Exception {e}')
+            return False
+        
+        return True
+
+                
+
 
     async def _execute_trades_loop_async(self):
         """
@@ -343,6 +370,7 @@ class TradeManager:
             _current_target_weight.fillna(Decimal(0), inplace = True)
 
             _df_weights = pd.concat([_current_weight, _current_target_weight, self._target_weight], axis = 1)
+            _df_weights.fillna(Decimal(0), inplace = True)
             _df_weights.columns = ['current_weight', 'next_weight', 'final_weight']
 
             _current_weight_sum: Decimal = _df_weights["current_weight"].abs().sum()
@@ -392,25 +420,68 @@ class TradeManager:
                         continue
                     
                     # 仮のオーダー量を計算する
-                    _order_lot = _order_value / _close_series[k] // self._exchange_manager.stepsize_series[k] * self._exchange_manager.stepsize_series[k]
+                    _stepsize = ExchangeManager.get_trade_stepsize(k)
+                    _order_lot = _order_value / _close_series[k] // _stepsize * _stepsize
+                    _order_lot_value = _order_lot * _close_series[k]
 
                     if abs(_target_value_series[k]) == Decimal(0):
                         # 次のターゲットバリューが0の場合は、現在ポジションの反対を売買量とする
                         _order_lot = -_amount_series[k]
-                        _order_value = _order_lot * _close_series[k]
+                        _order_lot_value = _order_lot * _close_series[k]
                         
-                    if abs(_order_value) < Decimal(11) or abs(_order_lot) < self._exchange_manager.minlot_series[k]:
-                        AsyncManager.log_info(f'   Skipping too small order : {_order_lot} {k.replace("USDT", "")} ({abs(_order_value)} USDT value, min lot size = {self._exchange_manager.minlot_series[k]})')
+                    if abs(_order_lot_value) < Decimal(11) or abs(_order_lot) < _stepsize:
+                        AsyncManager.log_info(f'    Skipping too small order : {_order_lot} {k.replace("USDT", "")} (close {_close_series[k]} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
                         continue
+                    
+                    AsyncManager.log_info(f'    Adding order :  {_order_lot} {k.replace("USDT", "")} (close {_close_series[k]} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
                     
                     # オーダー配列にオーダーを追加
                     _orders.append({'symbol': k, 'side': 'BUY' if _order_lot > 0 else 'SELL', 'type': 'MARKET', 'quantity': abs(_order_lot)})
+
+                    # オーダーログを記録
+                    _bookticker = self._datastore.bookticker.find({'s': k})
+                    if _bookticker:
+                        self.log_order_attempt(_now_datetime, k, _order_lot, _close_series[k], Decimal(_bookticker[0]['b']), Decimal(_bookticker[0]['B']), Decimal(_bookticker[0]['a']), Decimal(_bookticker[0]['A']))
 
             # オーダーを並列実行する
             _order_tasks = [self._execute_order(_order) for _order in _orders]
             _responses = await asyncio.gather(*_order_tasks)
 
             AsyncManager.log_info(f'   All orders completed')
+    
+    async def _execute_order(self, order: dict):
+        # リトライカウンターを初期化
+        _retry = 0
+
+        while True:
+            _api_use_result = ExchangeManager.use_api_weight(1)
+            if _api_use_result == False:
+                AsyncManager.log_warning(f'   {order["symbol"]} Retry. use_api_weight failed.')
+                await asyncio.sleep(1.0)
+                continue
+
+            if _retry > 3:
+                AsyncManager.log_warning(f'   More than {_retry - 1} retry. Abort {order}')
+                break
+
+            AsyncManager.log_info(f'   {order["symbol"]} order attempt (retry: {_retry}) {order}')
+            try:
+                _client = PyBottersManager.get_client()
+                _result = await _client.post('/fapi/v1/order', data = order.copy())
+                if _result.status != 200:
+                    _text = await _result.text()
+                    AsyncManager.log_warning(f'   {order["symbol"]} order retry. Status {_result.status} Text {_text}')
+                    await asyncio.sleep(1.0)
+                    _retry = _retry + 1
+                    continue
+
+                return _result
+            except BaseException as e:
+                # 例外は0.1秒待ってリトライ
+                AsyncManager.log_warning(f'   {order["symbol"]} Retry. Exception {e}')
+                await asyncio.sleep(1.0)
+                _retry = _retry + 1
+                continue
 
 if __name__ == "__main__":
     # 一定間隔でトレードをしながら、ウェイトの更新をトリガーに目標ウェイトを更新し続けるプログラム
@@ -449,6 +520,7 @@ if __name__ == "__main__":
         # WeightManagerの初期化
         WeightManager(wm_config)
 
+        tm_config['ws_baseurl'] = _exchange_config['ws_baseurl']
         TradeManager(tm_config)
         await TradeManager.run_async()
 
