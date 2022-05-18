@@ -37,7 +37,7 @@ wm_config = {
     'components_num': 16,
     'risk_aversion': 2.0,
     'l2_gamma': 0.02,
-    'rebalance_interval': timedelta(minutes = 15),
+    'rebalance_interval': timedelta(minutes = 30),
     'rebalance_calc_range': timedelta(days = 2)
 }
 
