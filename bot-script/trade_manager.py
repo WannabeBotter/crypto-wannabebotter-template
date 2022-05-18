@@ -518,6 +518,7 @@ if __name__ == "__main__":
         TimebarManager(_timebar_params)
 
         # WeightManagerの初期化
+        wm_config['timebar_table_name'] = TimebarManager.get_table_name()
         WeightManager(wm_config)
 
         tm_config['ws_baseurl'] = _exchange_config['ws_baseurl']

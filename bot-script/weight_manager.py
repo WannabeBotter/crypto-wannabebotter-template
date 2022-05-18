@@ -276,7 +276,7 @@ class WeightManager(AsyncManager):
         # ウェイト計算の実行に必要なデータフレームを作成
         _to_datetime = datetime.fromtimestamp(_rebalance_idx * self._rebalance_interval.total_seconds(), tz = timezone.utc)
         _from_datetime = _to_datetime - self._rebalance_calc_range
-        _sql = f'SELECT datetime, symbol, close, quote_volume FROM {self._timebar_table_name} WHERE datetime BETWEEN \'{_from_datetime}\' AND \'{_to_datetime}\' ORDER BY datetime ASC, symbol ASC'
+        _sql = f'SELECT datetime, symbol, close, quote_volume FROM "{self._timebar_table_name}" WHERE datetime >= \'{_from_datetime}\' AND datetime <= \'{_to_datetime}\' ORDER BY datetime ASC, symbol ASC'
         try:
             _df = TimescaleDBManager.read_sql_query(_sql, self._timebar_db_name)
             _df = _df.loc[~_df['symbol'].isin(self._prohibit_symbol), :]
@@ -399,6 +399,7 @@ if __name__ == "__main__":
         }
         TimebarManager(_timebar_params)
 
+        wm_config['timebar_table_name'] = TimebarManager.get_table_name()
         WeightManager(wm_config)
         await WeightManager.run_async()
 
