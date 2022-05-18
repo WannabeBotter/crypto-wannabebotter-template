@@ -136,7 +136,6 @@ class ExchangeManager(AsyncManager):
         # アカウントのバランス・ポジション変化にsubscribeする
         asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/{_instance._datastore.listenkey}', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
         asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!markPrice@arr@1s', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
-        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!miniTicker@arr', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
 
         # オーダー情報をwebsocketから受け取りログをDBに保存する非同期タスクを起動する
         asyncio.create_task(ExchangeManager._order_update_loop_async())
@@ -228,7 +227,7 @@ class ExchangeManager(AsyncManager):
 
         while True:
             try:
-                if await ExchangeManager.use_api_weight(5) == True:
+                if ExchangeManager.use_api_weight(5) == True:
                     _client = PyBottersManager.get_client()
                     _r = await _client.get('/fapi/v2/positionRisk')
                     if _r.status == 200:
@@ -488,8 +487,6 @@ class ExchangeManager(AsyncManager):
             平均エントリー価格
         pd.DataFrame['mark_price'] : Decimal
             最新のマーク価格
-        pd.DataFrame['close_price'] : Decimal
-            最新のクローズ価格
         pd.DataFrame['abs_usdt_value'] : Decimal
             ポジションのUSDT建て価格の絶対値
         pd.DataFrame['unrealized_pnl'] : Decimal
@@ -520,16 +517,10 @@ class ExchangeManager(AsyncManager):
                 else:
                     _mark_price = _entry_price + _unrealized_profit / _position_amount
                 
-                if _symbol_str not in _close_index_set:
-                    _close_price = _mark_price
-                else:
-                    _close_price = _close_series[_symbol_str]
-                
                 _position_dict[_symbol_str] = {
                     'amount': _position_amount,
                     'entry_price': _entry_price,
                     'mark_price': _mark_price,
-                    'close_price': _close_price,
                     'usdt_value': _position_amount * _mark_price,
                     'abs_usdt_value': abs(_position_amount) * _mark_price,
                     'unrealized_pnl': _unrealized_profit
@@ -753,7 +744,7 @@ if __name__ == "__main__":
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
         _exchange_config = binance_testnet_config.copy()
         ExchangeManager(_exchange_config)
-        ExchangeManager.run_async()
+        await ExchangeManager.run_async()
 
         while True:
             await asyncio.sleep(60.0)
