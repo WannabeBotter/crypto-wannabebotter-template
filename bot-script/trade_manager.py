@@ -193,6 +193,7 @@ class TradeManager:
 
         # Best bid / askにsubscribeする
         asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!bookTicker', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
+        asyncio.create_task(_client.ws_connect(f'{_instance._ws_baseurl}/ws/!miniTicker@arr', hdlr_json = _instance._datastore.onmessage, heartbeat = 10.0))
 
         # Kafka producerを起動する
         cls._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
@@ -219,15 +220,13 @@ class TradeManager:
         -------
         なし
         """
-        _sql = f"SELECT datetime, symbol, weight FROM {self._weight_table_name} ORDER BY datetime DESC, symbol ASC LIMIT {self._components_num}"
+        _sql = f'SELECT datetime, symbol, weight FROM "{self._weight_table_name}" ORDER BY datetime DESC, symbol ASC LIMIT {self._components_num}'
         try:
             _df = TimescaleDBManager.read_sql_query(_sql, self._weight_db_name, dtype = {'datetime': object, 'symbol': str, 'weight': str})
             _df = _df.loc[_df.loc[:, 'datetime'] == _df.iloc[0, _df.columns.get_loc('datetime')], :]
             
             _to_decimal = lambda x: Decimal(x)
             _df['weight'] = _df['weight'].apply(_to_decimal)
-
-            AsyncManager.log_info(_df)
         except Exception as e:
             AsyncManager.log_error(f'WeightManager.calc_portfolio_weight() : Cannot read weight from DB. {e}')
             return
@@ -237,6 +236,10 @@ class TradeManager:
 
         _df = _df.reset_index(drop = True).set_index('symbol')
         self._target_weight = _df.loc[:, 'weight']
+        self._last_step = 0
+
+        AsyncManager.log_info(f'WeightManager._update_target_weight() : Updating weight. origin = {self._origin_datetime} target = {self._target_datetime}\n')
+        AsyncManager.log_info(_df)
 
     async def _wait_weight_loop_async(self):
         """
@@ -258,16 +261,19 @@ class TradeManager:
                 await self._kafka_consumer.seek_to_beginning(*tps)
                 continue
             except Exception as e:
-                AsyncManager.log_error(f'TradeManager._wait_timebar_async() : Kafka consume failed. Exception {e}')
+                AsyncManager.log_error(f'TradeManager._wait_weight_loop_async() : Kafka consume failed. Exception {e}')
+                await asyncio.sleep(1.0)
                 continue
             
             if len(_msg_dict) > 0 or self._target_weight is None:
                 for k, v in _msg_dict.items():
                     for msg in v:
-                        AsyncManager.log_info(f'TradeManager._wait_timebar_async() : consumed msg {msg.topic}, {msg.partition}, {msg.offset}, {msg.key}, {msg.value}, {msg.timestamp}')
+                        AsyncManager.log_info(f'TradeManager._wait_weight_loop_async() : consumed msg {msg.topic}, {msg.partition}, {msg.offset}, {msg.key}, {msg.value}, {msg.timestamp}')
                 
                 # 目標ウェイトを更新
                 self._update_target_weight()
+            
+            await asyncio.sleep(1.0)
     
     def log_symbols_values(self, table_name: str = None, now_datetime: datetime = None, values: pd.Series = None):
         assert table_name is not None
@@ -299,9 +305,6 @@ class TradeManager:
             return False
         
         return True
-
-                
-
 
     async def _execute_trades_loop_async(self):
         """
@@ -353,7 +356,6 @@ class TradeManager:
             # 銘柄ごとの現在のUSDTバリューを計算
             _current_value_series = _position_df.loc[:, 'usdt_value']
             _amount_series = _position_df.loc[:, 'amount']
-            _close_series = _position_df.loc[:, 'close_price']
             _total_abs_usdt_value = _position_df.loc[:, 'abs_usdt_value'].sum()
             _unrealized_pnl_series = _position_df.loc[:, 'unrealized_pnl']
             _total_unrealized_pnl = _unrealized_pnl_series.sum()
@@ -415,39 +417,46 @@ class TradeManager:
             for k in _diff_value_series.keys():
                 _order_value = _diff_value_series[k]
                 if _order_value != 0 and k != 'USDTUSDT':
-                    if _close_series[k] == 0:
+                    _bookticker = self._datastore.bookticker.find({'s': k})
+                    if len(_bookticker) == 0:
+                        AsyncManager.log_warning(f'    Skipping no book info : {k.replace("USDT", "")}')
+                        continue
+
+                    _ticker = self._datastore.ticker.find({'s': k})
+                    if len(_ticker) == 0:
                         AsyncManager.log_warning(f'    Skipping no close_price : {k.replace("USDT", "")}')
                         continue
+
                     
                     # 仮のオーダー量を計算する
                     _stepsize = ExchangeManager.get_trade_stepsize(k)
-                    _order_lot = _order_value / _close_series[k] // _stepsize * _stepsize
-                    _order_lot_value = _order_lot * _close_series[k]
+                    _close = Decimal(_ticker[0]['c'])
+                    _order_lot = _order_value / _close // _stepsize * _stepsize
+                    _order_lot_value = _order_lot * _close
 
                     if abs(_target_value_series[k]) == Decimal(0):
                         # 次のターゲットバリューが0の場合は、現在ポジションの反対を売買量とする
                         _order_lot = -_amount_series[k]
-                        _order_lot_value = _order_lot * _close_series[k]
+                        _order_lot_value = _order_lot * _close
                         
                     if abs(_order_lot_value) < Decimal(11) or abs(_order_lot) < _stepsize:
-                        AsyncManager.log_info(f'    Skipping too small order : {_order_lot} {k.replace("USDT", "")} (close {_close_series[k]} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
+                        AsyncManager.log_info(f'    Skipping too small order : {_order_lot} {k.replace("USDT", "")} (close {_close} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
                         continue
                     
-                    AsyncManager.log_info(f'    Adding order :  {_order_lot} {k.replace("USDT", "")} (close {_close_series[k]} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
+                    AsyncManager.log_info(f'    Adding order :  {_order_lot} {k.replace("USDT", "")} (close {_close} total {abs(_order_lot_value)} USDT value, min lot size = {ExchangeManager.get_trade_minlot(k)})')
                     
                     # オーダー配列にオーダーを追加
                     _orders.append({'symbol': k, 'side': 'BUY' if _order_lot > 0 else 'SELL', 'type': 'MARKET', 'quantity': abs(_order_lot)})
 
                     # オーダーログを記録
-                    _bookticker = self._datastore.bookticker.find({'s': k})
-                    if _bookticker:
-                        self.log_order_attempt(_now_datetime, k, _order_lot, _close_series[k], Decimal(_bookticker[0]['b']), Decimal(_bookticker[0]['B']), Decimal(_bookticker[0]['a']), Decimal(_bookticker[0]['A']))
+                    self.log_order_attempt(_now_datetime, k, _order_lot, _close, Decimal(_bookticker[0]['b']), Decimal(_bookticker[0]['B']), Decimal(_bookticker[0]['a']), Decimal(_bookticker[0]['A']))
 
             # オーダーを並列実行する
             _order_tasks = [self._execute_order(_order) for _order in _orders]
             _responses = await asyncio.gather(*_order_tasks)
 
             AsyncManager.log_info(f'   All orders completed')
+            await asyncio.sleep(1.0)
     
     async def _execute_order(self, order: dict):
         # リトライカウンターを初期化
@@ -522,6 +531,7 @@ if __name__ == "__main__":
         WeightManager(wm_config)
 
         tm_config['ws_baseurl'] = _exchange_config['ws_baseurl']
+        tm_config['weight_table_name'] = WeightManager.get_table_name()
         TradeManager(tm_config)
         await TradeManager.run_async()
 
