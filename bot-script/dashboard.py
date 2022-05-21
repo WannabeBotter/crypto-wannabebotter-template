@@ -22,7 +22,7 @@ def get_colorpalette(colorpalette, n_colors):
 def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, render_from, render_to):
     # Jupyter notebookで表示したい場合はこちらを使う
     _fig = make_subplots(rows = 2, cols = 2,
-                         subplot_titles = ('未実現損益 + 証拠金', '銘柄ごとの未実現損益', '実際ウェイト', '目標ウェイト'),
+                         subplot_titles = ('未実現損益 + 証拠金', '実際ウェイト', '銘柄ごとの未実現損益', '目標ウェイト'),
                          shared_xaxes = True,
                          vertical_spacing=0.04)
     
@@ -64,7 +64,7 @@ def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, 
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_usdt_pnl_render_negative.index, y = _df_usdt_pnl_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
+            _fig.add_trace(go.Scatter(x = _df_usdt_pnl_render_negative.index, y = _df_usdt_pnl_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 1)
             
         if _col in _df_usdt_pnl_render_positive.columns.values:
             if _col not in _legend_list:
@@ -72,7 +72,7 @@ def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, 
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_usdt_pnl_render_positive.index, y = _df_usdt_pnl_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
+            _fig.add_trace(go.Scatter(x = _df_usdt_pnl_render_positive.index, y = _df_usdt_pnl_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 1)
 
     # 実際ポートフォリオウェイトの描画
     _df_real_weight_render = _df_real_weight
@@ -85,7 +85,7 @@ def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, 
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_real_weight_render_negative.index, y = _df_real_weight_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 1)
+            _fig.add_trace(go.Scatter(x = _df_real_weight_render_negative.index, y = _df_real_weight_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
             
         if _col in _df_real_weight_render_positive.columns.values:
             if _col not in _legend_list:
@@ -93,7 +93,7 @@ def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, 
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_real_weight_render_positive.index, y = _df_real_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 1)
+            _fig.add_trace(go.Scatter(x = _df_real_weight_render_positive.index, y = _df_real_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
         
     # 目標ポートフォリオウェイトの描画
     _df_target_weight_render = _df_target_weight
