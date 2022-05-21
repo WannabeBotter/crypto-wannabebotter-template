@@ -50,6 +50,7 @@ services:
       - GIT_ACCESSTOKEN=${GIT_ACCESSTOKEN} # GIT_ACCSESTOKENは事前にユーザー環境変数として設定しておく
       - GIT_USER=${GIT_USER} # GIT_USERは事前にユーザー環境変数として設定しておく
       - GIT_EMAIL=${GIT_EMAIL} # GIT_EMAILは事前にユーザー環境変数として設定しておく
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK} # DISCORD_WEBHOOKは事前にユーザー環境変数として設定しておく
     env_file:
       - .env
     command: start-notebook.sh --NotebookApp.token='wannabebotter' --NotebookApp.notebook_dir='/home/jovyan/work'
