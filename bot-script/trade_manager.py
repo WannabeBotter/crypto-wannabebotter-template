@@ -494,17 +494,22 @@ class TradeManager:
 
 if __name__ == "__main__":
     # 一定間隔でトレードをしながら、ウェイトの更新をトリガーに目標ウェイトを更新し続けるプログラム
+    from os import environ
     from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis, wm_config, tm_config
-    from logging import Logger, getLogger, basicConfig, Formatter
+    from logging import Logger, getLogger, basicConfig, handlers
     import logging
     from rich.logging import RichHandler
 
     async def async_task():
         # AsyncManagerの初期化
+        _filehandler = handlers.TimedRotatingFileHandler('trade_manager.log', when = 'D', encoding = 'utf-8', utc = True)
+        _filehandler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(funcName)s: %(message)s"))
         _richhandler = RichHandler(rich_tracebacks = True)
         _richhandler.setFormatter(logging.Formatter('%(message)s'))
-        basicConfig(level = logging.INFO, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+
+        basicConfig(level = logging.INFO, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler,_filehandler])
         _logger: Logger = getLogger('rich')
+        
         AsyncManager.set_logger(_logger)
 
         # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
