@@ -368,16 +368,15 @@ class TradeManager:
                 _current_weight = _current_value_series.copy()
                 _current_weight.loc[:] = Decimal(0)
             
-            _current_target_weight = _current_weight + (self._target_weight - _current_weight) / (self._step_count - min(self._step_count - 1, _step_in_rebalance_cycle))
-            _current_target_weight.fillna(Decimal(0), inplace = True)
+            _df_weights = pd.concat([_current_weight, self._target_weight], axis = 1).fillna(Decimal(0))
+            _df_weights.columns = ['current_weight', 'final_weight']
+            _df_weights.loc[:, 'next_weight'] = Decimal(0)
+            
+            _df_weights.loc[:, 'next_weight'] = _df_weights.loc[:, 'current_weight'] + (_df_weights.loc[:, 'final_weight'] - _df_weights.loc[:, 'current_weight']) / (self._step_count - min(self._step_count - 1, _step_in_rebalance_cycle))
 
-            _df_weights = pd.concat([_current_weight, _current_target_weight, self._target_weight], axis = 1)
-            _df_weights.fillna(Decimal(0), inplace = True)
-            _df_weights.columns = ['current_weight', 'next_weight', 'final_weight']
-
-            _current_weight_sum: Decimal = _df_weights["current_weight"].abs().sum()
-            _next_weight_sum: Decimal = _df_weights["next_weight"].abs().sum()
-            _final_weight_sum: Decimal = _df_weights["final_weight"].abs().sum()
+            _current_weight_sum: Decimal = _df_weights['current_weight'].abs().sum()
+            _next_weight_sum: Decimal = _df_weights['next_weight'].abs().sum()
+            _final_weight_sum: Decimal = _df_weights['final_weight'].abs().sum()
             
             AsyncManager.log_info(f'\n{_df_weights[_df_weights.any(axis = 1)]}\n'\
                                   f'current_weight sum = {_current_weight_sum.quantize(Decimal("0.01"), rounding = ROUND_HALF_UP)}\n'\
@@ -409,7 +408,7 @@ class TradeManager:
                 continue
                     
             # 目標バリューからの差、および注文すべきロットを計算する
-            _target_value_series = _current_target_weight * (_cw_usdt_balance + _total_unrealized_pnl)
+            _target_value_series = _df_weights.loc[:, 'next_weight'] * (_cw_usdt_balance + _total_unrealized_pnl)
             _diff_value_series = (_target_value_series - _current_value_series)
 
             # 注文を出す
