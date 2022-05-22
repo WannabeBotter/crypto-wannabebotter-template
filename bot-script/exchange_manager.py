@@ -556,9 +556,7 @@ class ExchangeManager(AsyncManager):
         _total_abs_usdt_value = _position_df.loc[:, 'abs_usdt_value'].sum()
         _total_unrealized_pnl = _position_df.loc[:, 'unrealized_pnl'].sum()
 
-        AsyncManager.log_info(f'ExchangeManager.print_position()')
-        AsyncManager.log_info(_position_df[_position_df['amount'] != 0])
-        AsyncManager.log_info(f'Pos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
+        AsyncManager.log_info(f'\nExchangeManager.print_position()\n{_position_df[_position_df["amount"] != 0]}\nPos value = {_total_usdt_value}\nPos ABS value = {_total_abs_usdt_value}\nUnrealized PnL = {_total_unrealized_pnl}\nMargin balance = {_cw_usdt_balance + _total_unrealized_pnl}')
     
     @classmethod
     def init_database(cls, force = False):
