@@ -115,7 +115,7 @@ def visualize_performance_plotly(df_target_weight, df_real_weight, df_usdt_pnl, 
                 _show_legend = False
             _fig.add_trace(go.Scatter(x = _df_target_weight_render_positive.index, y = _df_target_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 2)
         
-    _fig.update_layout(width = 1200, height = 800)
+        _fig.update_layout(width = 1200, height = 800, uirevision='0')
     return _fig    
 
 # TimescaleDB用のユーティリティライブラリの初期化
