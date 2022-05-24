@@ -56,29 +56,27 @@ def prepare_dataframe(params, disable_tqdm=False):
 
     # TimescaleDBからクローズ系列、ドル単位の取引ボリュームを取得する
     _table_name = TimebarManager.get_table_name()
-    _sql = f'SELECT datetime, symbol, close, open, mark_close, quote_volume from "{_table_name}" WHERE datetime BETWEEN timestamp \'{params["backtest_from"]}\' - interval \'{params["weight_calc_period"] * 24 * 60 * 60} seconds\' AND timestamp \'{params["backtest_to"]}\' ORDER BY datetime ASC'
+    _sql = f'SELECT datetime, symbol, close, mark_close, quote_volume from "{_table_name}" WHERE datetime BETWEEN timestamp \'{params["backtest_from"]}\' - interval \'{params["weight_calc_period"] * 24 * 60 * 60} seconds\' AND timestamp \'{params["backtest_to"]}\' ORDER BY datetime ASC'
     df_portfolio = TimescaleDBManager.read_sql_query(_sql, 'TimebarManager')
 
     # df_portfolioにUSDT/USDTを追加
     _unique_datetime = df_portfolio['datetime'].unique()
-    _df_usdt = pd.DataFrame(index=_unique_datetime, columns= ['symbol', 'close', 'dollar_volume']).rename_axis('datetime').sort_index().reset_index()
-    _df_usdt.loc[:, 'symbol'] = 'usdtusdt'
+    _df_usdt = pd.DataFrame(index=_unique_datetime, columns= ['symbol', 'close', 'quote_volume']).rename_axis('datetime').sort_index().reset_index()
+    _df_usdt.loc[:, 'symbol'] = 'USDTUSDT'
     _df_usdt.loc[:, 'close'] = 1.0
-    _df_usdt.loc[:, 'open'] = _df_usdt.loc[:, 'close']
     _df_usdt.loc[:, 'mark_close'] = _df_usdt.loc[:, 'close']
-    _df_usdt.loc[:, 'dollar_volume'] = 0
+    _df_usdt.loc[:, 'quote_volume'] = 0
     df_portfolio = pd.concat([df_portfolio, _df_usdt])
 
     # デバッグ用のsinusdt系列とsinusdt系列を追加
     if params['debug_sinusdt'] == True:
         # 注 : このsinカーブは起点がシミュレーション開始時間として指定された時間から、ポートフォリオ計算に必要な時間を引いた時点となる
         _unique_datetime = df_portfolio['datetime'].unique()
-        _df_sin = pd.DataFrame(index=_unique_datetime, columns= ['symbol', 'close', 'dollar_volume']).rename_axis('datetime').sort_index().reset_index()
+        _df_sin = pd.DataFrame(index=_unique_datetime, columns= ['symbol', 'close', 'quote_volume']).rename_axis('datetime').sort_index().reset_index()
         _df_sin.loc[:, 'symbol'] = 'sinusdt'
         _df_sin.loc[:, 'close'] = np.sin(2 * np.pi * _df_sin.index.values / (30 * 24 * 60 * 60 / params['timebar_interval_sec'])) / 2 + 1
-        _df_sin.loc[:, 'open'] = _df_sin.loc[:, 'close']
         _df_sin.loc[:, 'mark_close'] = _df_sin.loc[:, 'close']
-        _df_sin.loc[:, 'dollar_volume'] = 0
+        _df_sin.loc[:, 'quote_volume'] = 0
         df_portfolio = pd.concat([df_portfolio, _df_sin])
         
         _df_sin2 = _df_sin.copy()
@@ -103,7 +101,7 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
     _rows_early_skip = max(ROWS_WEIGHT_CALC, ROWS_COMPONENTS_SELECT_PERIOD)
     _initial_rebalance = ROWS_REBALANCE * math.ceil(_rows_early_skip / ROWS_REBALANCE)
     df_target_weight.iloc[0:_initial_rebalance] = 0
-    df_target_weight.iloc[0:_initial_rebalance, df_target_weight.columns.get_loc('usdtusdt')] = 1
+    df_target_weight.iloc[0:_initial_rebalance, df_target_weight.columns.get_loc('USDTUSDT')] = 1
     
     for i in tqdm(range(_initial_rebalance, df_target_weight.shape[0], ROWS_REBALANCE)):
         # 銘柄入れ替えタイミングか、銘柄配列が空の場合はポートフォリオ銘柄を再計算する
@@ -169,9 +167,9 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
             # 目標ウェイトを書き込み
             _cleaned_weights = _ef.clean_weights()
         except BaseException as e:
-            # 例外発生時にはusdtusdtにすべてのウェイトを割り当てる
+            # 例外発生時にはUSDTUSDTにすべてのウェイトを割り当てる
             print(f'{datetime.now(timezone.utc)} : ExchangeManager.calc_target_weight() : Assign 100% to USDT. Exception {e}')
-            _cleaned_weights = { 'usdtusdt': 1.0 }
+            _cleaned_weights = { 'USDTUSDT': 1.0 }
 
         if params['debug_sinusdt'] == True:
             if (i // ROWS_REBALANCE) % 2 == 0:
@@ -187,7 +185,7 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
 
         if np.count_nonzero(_target_weights) <= 1:
             # 構成銘柄が1つしかない場合は、足りないウェイトをUSDT/USDTに足す
-            df_target_weight.iloc[i, df_target_weight.columns.get_loc('usdtusdt')] += (1 - _target_weights.abs().sum())
+            df_target_weight.iloc[i, df_target_weight.columns.get_loc('USDTUSDT')] += (1 - _target_weights.abs().sum())
         elif _target_weights.abs().sum() != 1:
             # 構成銘柄が複数ある場合は、通常の正規化を行う
             df_target_weight.iloc[i, :] = _target_weights /_target_weights.abs().sum()
@@ -202,7 +200,7 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
     df_target_weight.ffill(inplace = True)
     
     # リバランス中を含むすべてのタイミングで1に満たないウェイトを、USDT/USDTに割り当てる
-    df_target_weight.loc[:, 'usdtusdt'] += (1 - df_target_weight.abs().sum(axis = 1))
+    df_target_weight.loc[:, 'USDTUSDT'] += (1 - df_target_weight.abs().sum(axis = 1))
     
     # 異常なウェイトがないか確認
     if params['debug'] == True:
@@ -214,7 +212,7 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
     
     return df_target_weight
 
-def simulate_trades(df_close, df_open, df_mark_close, df_target_weight, params):
+def simulate_trades(df_close, df_mark_close, df_target_weight, params):
     # よく使う定数を計算しておく
     ROWS_REBALANCE, ROWS_EXECUTION, ROWS_WAIT_FOR_EXECUTION, ROWS_WEIGHT_CALC, ROWS_COMPONENTS_SWAP_INTERVAL, ROWS_COMPONENTS_SELECT_PERIOD = calc_cycle_constants(params)
     
@@ -225,13 +223,13 @@ def simulate_trades(df_close, df_open, df_mark_close, df_target_weight, params):
     df_fee = df_target_weight.copy()
     
     # 初期リアルウェイト、初期ポジション、初期USDT価値を設定してシミュレーションに備える (target_weightはすでに設定済み)
-    df_real_weight.iloc[0, df_position.columns.get_loc('usdtusdt')] = 1
-    df_position.iloc[0, df_position.columns.get_loc('usdtusdt')] = params['initial_usdt_value']
-    df_usdt_value.iloc[0, df_position.columns.get_loc('usdtusdt')] = params['initial_usdt_value']
+    df_real_weight.iloc[0, df_position.columns.get_loc('USDTUSDT')] = 1
+    df_position.iloc[0, df_position.columns.get_loc('USDTUSDT')] = params['initial_usdt_value']
+    df_usdt_value.iloc[0, df_position.columns.get_loc('USDTUSDT')] = params['initial_usdt_value']
     
     # t+1のオープン価格を内部で利用しているので、最終行はシミュレーションに含めない
     for i in tqdm(range(1, df_target_weight.shape[0] - 1, 1)):
-        np_real_weight, np_usdt_value, np_fee, np_position, = simulate_trades_numba(i, df_close.values, df_open.values, df_mark_close.values, df_target_weight.values, df_real_weight.values, df_usdt_value.values, df_position.values, df_fee.values, ROWS_REBALANCE, ROWS_WAIT_FOR_EXECUTION, ROWS_EXECUTION, df_close.columns.get_loc('usdtusdt'), params['execution_cost'])
+        np_real_weight, np_usdt_value, np_fee, np_position, = simulate_trades_numba(i, df_close.values, df_mark_close.values, df_target_weight.values, df_real_weight.values, df_usdt_value.values, df_position.values, df_fee.values, ROWS_REBALANCE, ROWS_WAIT_FOR_EXECUTION, ROWS_EXECUTION, df_close.columns.get_loc('USDTUSDT'), params['execution_cost'])
         df_real_weight.iloc[i, :] = np_real_weight
         df_usdt_value.iloc[i, :] = np_usdt_value
         df_fee.iloc[i, :] = np_fee
@@ -242,17 +240,19 @@ def simulate_trades(df_close, df_open, df_mark_close, df_target_weight, params):
 # 5分足でのリバランス処理の計算を行う (numba版)
 # 用語 : リバランスサイクル = 2時間～数日間で行われるポートフォリオウェイトの大きな調整
 #        リバランスステップ = リバランスはサイクルを小さく分割して少しずつ行う。その分割されたステップのこと。おおまかに5分ごとに行われる。
-@numba.jit(nopython=True)
-def simulate_trades_numba(i, np_close, np_open, np_mark_close, np_target_weight, np_real_weight, np_usdt_value, np_position, np_fee, ROWS_REBALANCE, ROWS_WAIT_FOR_EXECUTION, ROWS_EXECUTION, idx_usdt, execution_cost):
+#@numba.jit(nopython=True)
+def simulate_trades_numba(i, np_close, np_mark_close, np_target_weight, np_real_weight, np_usdt_value, np_position, np_fee, ROWS_REBALANCE, ROWS_WAIT_FOR_EXECUTION, ROWS_EXECUTION, idx_usdt, execution_cost):
     _step_in_rebalance_cycle = i % ROWS_REBALANCE
 
     # ステップt-1とステップtのクローズ価格の差を計算する。新規銘柄が取引所に追加されたタイミングではNaNが出てくるので0クリアしておく
     _close_diff = np_close[i] - np_close[i-1]
     _close_diff[np.isnan(_close_diff)] = 0
+
+    # マーク価格ベースでシミュレーションしたい場合に利用する
     _mark_close_diff = np_mark_close[i] - np_mark_close[i-1]
     _mark_close_diff[np.isnan(_mark_close_diff)] = 0
     
-    # ステップt-1の保有ポジションがステップtのクローズ価格をもとにすると、どれだけのUSDT建て価値になるかを求める (マーク価格ベース)
+    # ステップt-1の保有ポジションがステップtのクローズ価格をもとにすると、どれだけのUSDT建て価値になるかを求める
     # 具体的には、ステップt-1での保有ポジション x ステップt-1とステップtのクローズ価格の差 を ステップt-1のUSDT建て価値に加算する
     # ステップ0はUSDT/USDTの割合が100%、USDT建て価値として初期値10,000が入っている
     _value_before_rebalance = np_usdt_value[i-1] + np.sign(np_position[i-1]) * _mark_close_diff * np_position[i-1]
@@ -280,13 +280,17 @@ def simulate_trades_numba(i, np_close, np_open, np_mark_close, np_target_weight,
         # このサイクルが終わった時点で到達しているべき、各銘柄のUSDT建ての価値を求める (この段階ではまだポジション調整の手数料を考慮していない)
         np_usdt_value[i] = _value_before_rebalance_abssum * np_real_weight[i]
         
-        # ステップt-1から現在ステップでのUSDT建ての価値の変化量から、徴収される手数料の絶対値を求める
+        # ステップt-1から現在ステップでのUSDT建ての価値の変化量から、徴収される手数料の絶対値を求める。USDTは手数料は常に0
         _usdt_value_diff_abs = np.abs(np_usdt_value[i] - np_usdt_value[i-1])
         _usdt_value_diff_abs[np.isnan(_usdt_value_diff_abs)] = 0
-        
-        # ステップtのUSDT建て価値から手数料分を引く
         np_fee[i] = _usdt_value_diff_abs * execution_cost
-        np_usdt_value[i] = np_usdt_value[i] - np.sign(np_usdt_value[i]) * np_fee[i]
+        np_fee[i][idx_usdt] = 0
+
+        # 手数料の合計を_value_before_rebalance_abssumから引き算し、手数料を反映したリバランス後のUSDT建てのポートフォリオ価値を求める
+        _value_before_rebalance_after_fee_abssum = _value_before_rebalance_abssum - np.sum(np_fee[i])
+        
+        # このサイクルが終わった時点で到達しているべき、各銘柄のUSDT建ての価値を求める (ポジション調整の手数料を考慮したもの)
+        np_usdt_value[i] = _value_before_rebalance_after_fee_abssum * np_real_weight[i]
 
         # ステップtでの目標USDT建て価値と、ステップtのクローズ価格から、ステップtのポジションを計算する
         _np_position = np_usdt_value[i] / np_close[i]
@@ -433,7 +437,6 @@ def target_function(params):
     
     # ポートフォリオ計算に利用するクローズとボリューム用のデータフレームを準備
     _df_close = _df_portfolio.reset_index().pivot(index = 'datetime', columns = 'symbol', values='close')
-    _df_open = _df_portfolio.reset_index().pivot(index = 'datetime', columns = 'symbol', values='open')
     _df_mark_close = _df_portfolio.reset_index().pivot(index = 'datetime', columns = 'symbol', values='mark_close')
     _df_dollar_volume = _df_portfolio.reset_index().pivot(index = 'datetime', columns = 'symbol', values='quote_volume').fillna(0)
     _df_dollar_volume_sma = _df_dollar_volume.apply(lambda rows: talib.SMA(rows, ROWS_COMPONENTS_SELECT_PERIOD))
@@ -441,13 +444,13 @@ def target_function(params):
     _df_target_weight[:] = np.nan # ffillとbfillを使うので、np.nanで埋める必要がある
 
     _df_target_weight = calc_target_weight(_df_close, _df_target_weight, _df_dollar_volume_sma, params)
-    _df_real_weight, _df_usdt_value, _df_fee, _df_position = simulate_trades(_df_close, _df_open, _df_mark_close, _df_target_weight, params)
+    _df_real_weight, _df_usdt_value, _df_fee, _df_position = simulate_trades(_df_close, _df_mark_close, _df_target_weight, params)
     
     # Plotlyを利用した可視化
     visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        params['backtest_from'], params['backtest_to'], 6 * 60, True, params)
+                                                                                        '2022-05-08 00:00:00+00', params['backtest_to'], 10, False, params)
     _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        '2022-04-15 00:00:00+00', params['backtest_to'], 10, False, params)
+                                                                                        params['backtest_from'], '2022-05-08 00:00:00+00', 10, True, params)
     
     gc.collect()
     mlflow.end_run()
@@ -461,8 +464,8 @@ def objective(trial):
     _params = params.copy()
     
     if _params['debug'] == False:
-        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 2, 24, 2) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
-        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 4 # リバランス間隔の1/4の時間でウェイト調整を終える
+        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
+        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 8 # リバランス間隔の1/4の時間でウェイト調整を終える
         _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
         _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
         _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
@@ -482,8 +485,8 @@ args = parser.parse_args()
 
 # 実験のパラメータ
 params_base = {
-    'experiment_name': 'int_2h-24h_cost_0.006_l2reg_0.01-0.1_riska_0.1_4',
-    'backtest_from': '2022-04-01 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
+    'experiment_name': 'bugfix4_int_8h-24h_cost_0.006_l2reg_0.01-0.1_riska_0.1_4',
+    'backtest_from': '2022-04-08 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
     'backtest_to': '2023-01-01 00:00:00+00',
     'efficientfrontier_type': 'EfficientMeanVariance',
     'objective_type': 'max_quadratic_utility',
@@ -491,8 +494,8 @@ params_base = {
     'execution_cost': 0.006,                 # トレード手数料
     'debug': args.debug,                     # 規定値のパラメータを使ったデバッグを行うフラグ
     'debug_sinusdt': args.debugsinusdt,      # 価格系列としてsinusdt / sin2usdtを利用するフラグ
-    'exchange_name': 'binanceusdm(testnet)', # DB読み込み時に利用される取引所名
-#    'exchange_name': 'binanceusdm',         # DB読み込み時に利用される取引所名
+    'exchange_name': 'binanceusdm-mainnet', # DB読み込み時に利用される取引所名
+#    'exchange_name': 'binanceusdm-testnet',         # DB読み込み時に利用される取引所名
     'initial_usdt_value': 2000,              # USDT/USDTの初期ポジション数
     'experiment_rounds': 100,                # 実験の繰り返し数 
     'timebar_interval_sec': 5*60,            # タイムバー間隔 [秒]
@@ -523,20 +526,20 @@ params = params_base.copy()
 if params['debug'] == True:
     params['backtest_from'] = '2022-04-03 00:00:00+00'
     params['backtest_to'] = '2023-01-01 00:00:00+00'
-    params['rebalance_interval_hour'] = 1
+    params['rebalance_interval_hour'] = 8
     params['rebalance_wait_sec'] = 5*60
-    params['rebalance_time_sec'] = 50*60
-    params['weight_calc_period'] = 4
-    params['num_components'] = 8
+    params['rebalance_time_sec'] = 2*60*60
+    params['weight_calc_period'] = 2
+    params['num_components'] = 16
     params['components_swap_interval'] = 1
-    params['components_select_period'] = 22        
-    params['initial_usdt_value'] = 2380
+    params['components_select_period'] = 2        
+    params['initial_usdt_value'] = 10000
     params['execution_cost'] = 0.006
     
 # AsyncManagerの初期化
 _richhandler = RichHandler(rich_tracebacks = True)
 _richhandler.setFormatter(logging.Formatter('%(message)s'))
-basicConfig(level = logging.DEBUG, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
+basicConfig(level = logging.INFO, datefmt = '[%Y-%m-%d %H:%M:%S]', handlers = [_richhandler])
 _logger: Logger = getLogger('rich')
 AsyncManager.set_logger(_logger)
 
