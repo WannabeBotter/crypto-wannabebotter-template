@@ -171,7 +171,7 @@ class WeightManager(AsyncManager):
         cls._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
         await cls._kafka_producer.start()
 
-        cls._kafka_consumer = AIOKafkaConsumer('TimebarManager', bootstrap_servers = 'kafka:9092', group_id = 'group')
+        cls._kafka_consumer = AIOKafkaConsumer(f'TimebarManager.{ExchangeManager.get_exchange_name()}', bootstrap_servers = 'kafka:9092', group_id = 'group')
         await cls._kafka_consumer.start()
 
         # オーダー情報をwebsocketから受け取りウェイト計算をする非同期タスクを起動する
@@ -361,19 +361,25 @@ class WeightManager(AsyncManager):
             TimescaleDBManager.df_to_sql(_df, 'WeightManager', self.get_table_name(), 'append')
 
             # Kafkaにウェイトが更新されたシグナルを送信
-            await WeightManager._kafka_producer.send_and_wait(self.__class__.__name__, f'Weight updated'.encode('utf-8'))
+            await WeightManager._kafka_producer.send_and_wait(f'{self.__class__.__name__}.{ExchangeManager.get_exchange_name()}', f'Weight updated'.encode('utf-8'))
 
             AsyncManager.log_info(f'WeightManager._calc_weight() : new weight = {self._weights[self._weights != 0]}')
             AsyncManager.log_info(f'WeightManager._calc_weight() : new weight abs sum = {np.sum(np.abs(self._weights))}')
 
 if __name__ == "__main__":
     # タイムバーのダウンロードをトリガーにウェイトを計算するプログラム
+    import argparse
     from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis, wm_config
     from logging import Logger, getLogger, basicConfig, Formatter
     import logging
     from rich.logging import RichHandler
 
     async def async_task():
+         # コマンドライン引数の取得
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-t', '--testnet', help = 'Download mainnet timebar', action = 'store_true')
+        args = parser.parse_args()
+
         # AsyncManagerの初期化
         _richhandler = RichHandler(rich_tracebacks = True)
         _richhandler.setFormatter(logging.Formatter('%(message)s'))
@@ -384,14 +390,20 @@ if __name__ == "__main__":
         # TimebarManagerの初期化前に、TimescaleDBManagerの初期化が必要
         TimescaleDBManager(pg_config)
 
-        # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _pybotters_params = binance_testnet_config.copy()
+        # コマンドラインパラメータから、マネージャー初期化用パラメータを取得
+        if args.testnet == True:
+            _pybotters_params = binance_testnet_config.copy()
+            _exchange_params = binance_testnet_config.copy()
+        else:
+            _pybotters_params = binance_config.copy()
+            _exchange_params = binance_config.copy()
+
+        # PyBottersの初期化
         _pybotters_params['apis'] = pybotters_apis.copy()
         PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        _exchange_config = binance_testnet_config.copy()
-        ExchangeManager(_exchange_config)
+        ExchangeManager(_exchange_params)
 
         # TimebarManagerの初期化
         _timebar_params = {

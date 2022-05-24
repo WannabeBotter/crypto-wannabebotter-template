@@ -199,7 +199,7 @@ class TradeManager:
         cls._kafka_producer = AIOKafkaProducer(bootstrap_servers = 'kafka:9092')
         await cls._kafka_producer.start()
 
-        cls._kafka_consumer = AIOKafkaConsumer('WeightManager', bootstrap_servers = 'kafka:9092', group_id = 'group')
+        cls._kafka_consumer = AIOKafkaConsumer(f'WeightManager.{ExchangeManager.get_exchange_name()}', bootstrap_servers = 'kafka:9092', group_id = 'group')
         await cls._kafka_consumer.start()
 
         # ウェイト情報をkafkaのシグナルに従って読み込み、トレード設定をする非同期タスクを起動する
@@ -493,6 +493,7 @@ class TradeManager:
 
 if __name__ == "__main__":
     # 一定間隔でトレードをしながら、ウェイトの更新をトリガーに目標ウェイトを更新し続けるプログラム
+    import argparse
     from os import environ
     from crypto_bot_config import pg_config, binance_testnet_config, binance_config, pybotters_apis, wm_config, tm_config
     from logging import Logger, getLogger, basicConfig, handlers
@@ -500,6 +501,11 @@ if __name__ == "__main__":
     from rich.logging import RichHandler
 
     async def async_task():
+        # コマンドライン引数の取得
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-t', '--testnet', help = 'Download mainnet timebar', action = 'store_true')
+        args = parser.parse_args()
+
         # AsyncManagerの初期化
         _filehandler = handlers.TimedRotatingFileHandler('trade_manager.log', when = 'D', encoding = 'utf-8', utc = True)
         _filehandler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(funcName)s: %(message)s"))
@@ -515,7 +521,15 @@ if __name__ == "__main__":
         TimescaleDBManager(pg_config)
 
         # TimebarManagerの初期化前に、PyBottersManagerの初期化が必要
-        _pybotters_params = binance_testnet_config.copy()
+        # コマンドラインパラメータから、マネージャー初期化用パラメータを取得
+        if args.testnet == True:
+            _pybotters_params = binance_testnet_config.copy()
+            _exchange_params = binance_testnet_config.copy()
+        else:
+            _pybotters_params = binance_config.copy()
+            _exchange_params = binance_config.copy()
+
+        # PyBottersの初期化
         _pybotters_params['apis'] = pybotters_apis.copy()
         PyBottersManager(_pybotters_params)
 
