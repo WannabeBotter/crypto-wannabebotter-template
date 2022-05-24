@@ -448,9 +448,9 @@ def target_function(params):
     
     # Plotlyを利用した可視化
     visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        '2022-05-08 00:00:00+00', params['backtest_to'], 10, False, params)
+                                                                                        '2022-05-08 00:00:00+00', params['backtest_to'], 10, True, params)
     _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        params['backtest_from'], '2022-05-08 00:00:00+00', 10, True, params)
+                                                                                        params['backtest_from'], '2022-05-08 00:00:00+00', 10, False, params)
     
     gc.collect()
     mlflow.end_run()
@@ -464,13 +464,13 @@ def objective(trial):
     _params = params.copy()
     
     if _params['debug'] == False:
-        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
-        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 8 # リバランス間隔の1/4の時間でウェイト調整を終える
+#        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
+#        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 8 # リバランス間隔の1/4の時間でウェイト調整を終える
         _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
         _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
         _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
-        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
-        _params['components_select_period'] = _params['weight_calc_period']
+#        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
+#        _params['components_select_period'] = _params['weight_calc_period']
             
     _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = target_function(_params)
     return _max_usdt_value, _sharpe
@@ -485,13 +485,13 @@ args = parser.parse_args()
 
 # 実験のパラメータ
 params_base = {
-    'experiment_name': 'bugfix4_int_8h-24h_cost_0.006_l2reg_0.01-0.1_riska_0.1_4',
+    'experiment_name': 'bugfix5_int_24h_cost_0.01_l2reg_0.01-0.1_riska_0.1_4',
     'backtest_from': '2022-04-08 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
     'backtest_to': '2023-01-01 00:00:00+00',
     'efficientfrontier_type': 'EfficientMeanVariance',
     'objective_type': 'max_quadratic_utility',
     'l2_reg_gamma': 0.03,
-    'execution_cost': 0.006,                 # トレード手数料
+    'execution_cost': 0.01,                 # トレード手数料
     'debug': args.debug,                     # 規定値のパラメータを使ったデバッグを行うフラグ
     'debug_sinusdt': args.debugsinusdt,      # 価格系列としてsinusdt / sin2usdtを利用するフラグ
     'exchange_name': 'binanceusdm-mainnet', # DB読み込み時に利用される取引所名
@@ -502,9 +502,9 @@ params_base = {
     
     'objective_param': 3,        # リスク回避度
     'num_components': 16,           # ポートフォリオ銘柄数
-    'rebalance_interval_hour': 4,   # ポートフォリオリバランス間隔 [時間]
+    'rebalance_interval_hour': 24,   # ポートフォリオリバランス間隔 [時間]
     'rebalance_wait_sec': 5 * 60,   # ポートフォリオリバランス開始までの待ち時間
-    'rebalance_time_sec': 60 * 60,  # ポートフォリオリバランス執行の期間 (5分に1回の執行を行う)
+    'rebalance_time_sec': 2 * 60 * 60,  # ポートフォリオリバランス執行の期間 (5分に1回の執行を行う)
     'weight_calc_period': 2,        # ポートフォリオウェイト計算時のリターン系列の長さ [日]
     'components_swap_interval': 1,  # ポートフォリオ銘柄入替間隔 [ポートフォリオリバランス回数, 1の場合は毎回入れ替え, 2の場合は2回ごとに入れ替え]
     'components_select_period': 2, # ポートフォリオ銘柄ボリューム観察期間 [日]
