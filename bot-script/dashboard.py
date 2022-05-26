@@ -156,15 +156,15 @@ def update_graph_live(n):
     _datetime_from = _datetime_to - timedelta(days = 7)
 
     # リアルウェイト取得
-    _table_name = f'binanceusdm(testnet)_current_weight_5m'
+    _table_name = f'binanceusdm-mainnet_current_weight_5m'
     df_real_weight = get_value_dataframe(_table_name, _datetime_from)
 
     # 目標ウェイト取得
-    _table_name = f'binanceusdm(testnet)_target_weight_5m'
+    _table_name = f'binanceusdm-mainnet_target_weight_5m'
     df_target_weight = get_value_dataframe(_table_name, _datetime_from)
 
     # 未実現損益取得
-    _table_name = f'binanceusdm(testnet)_current_upnl_5m'
+    _table_name = f'binanceusdm-mainnet_current_upnl_5m'
     df_current_pnl = get_value_dataframe(_table_name, _datetime_from)
 
     return visualize_performance_plotly(df_target_weight, df_real_weight, df_current_pnl, _datetime_from, _datetime_to)
