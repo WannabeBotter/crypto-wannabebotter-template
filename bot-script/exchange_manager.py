@@ -342,7 +342,7 @@ class ExchangeManager(AsyncManager):
         return f'{_instance._exchange_name}_order_log'.lower()
     
     @classmethod
-    def get_usdt_cw_margin(cls) -> Decimal:
+    def get_cw_margin(cls) -> Decimal:
         """
         USDTの証拠金残額を取得する関数
         
@@ -359,13 +359,15 @@ class ExchangeManager(AsyncManager):
         
         _instance: ExchangeManager = ExchangeManager._instance
 
-        _balance = _instance._datastore.balance.find({'a': 'USDT'})
-        if _balance is not None and len(_balance) > 0:
-            cw_usdt_balance = Decimal(_balance[0]['cw'])
-        else:
-            cw_usdt_balance = Decimal(0)
+        cw_balance = Decimal(0)
 
-        return cw_usdt_balance
+        for _symbol in ['USDT', 'USDC', 'BUSD']:
+            _balance = _instance._datastore.balance.find({'a': _symbol})
+
+            if _balance is not None and len(_balance) > 0:
+                cw_balance += Decimal(_balance[0]['cw'])
+
+        return cw_balance
     
     @classmethod
     def get_trade_stepsize(cls, symbol: str = None):
@@ -551,7 +553,7 @@ class ExchangeManager(AsyncManager):
             AsyncManager.log_warning(f'ExchangeManager.print_position() : Position data is not avalable yet. Abort.')
             return
 
-        _cw_usdt_balance = ExchangeManager.get_usdt_cw_margin()
+        _cw_usdt_balance = ExchangeManager.get_cw_margin()
         _total_usdt_value = _position_df.loc[:, "usdt_value"].sum()
         _total_abs_usdt_value = _position_df.loc[:, 'abs_usdt_value'].sum()
         _total_unrealized_pnl = _position_df.loc[:, 'unrealized_pnl'].sum()

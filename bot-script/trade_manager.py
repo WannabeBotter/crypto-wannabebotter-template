@@ -340,7 +340,7 @@ class TradeManager:
             AsyncManager.log_info(f'TradeManager._execute_trades_loop_async() : Entering new step {_step_in_rebalance_cycle} / {self._step_count}')
             
             # 証拠金のUSDTバリューと現在ポジションを取得
-            _cw_usdt_balance = ExchangeManager.get_usdt_cw_margin()
+            _cw_usdt_balance = ExchangeManager.get_cw_margin()
             await ExchangeManager.update_position_async()
             _position_df = ExchangeManager.get_position_df()
 
@@ -534,8 +534,7 @@ if __name__ == "__main__":
         PyBottersManager(_pybotters_params)
 
         # タイムバーをダウンロードするだけなら、run_asyncを読んでWebsocket APIからポジション情報等をダウンロードする必要はない
-        _exchange_config = binance_testnet_config.copy()
-        ExchangeManager(_exchange_config)
+        ExchangeManager(_exchange_params)
         await ExchangeManager.run_async()
 
         # TimebarManagerの初期化
@@ -548,7 +547,7 @@ if __name__ == "__main__":
         wm_config['timebar_table_name'] = TimebarManager.get_table_name()
         WeightManager(wm_config)
 
-        tm_config['ws_baseurl'] = _exchange_config['ws_baseurl']
+        tm_config['ws_baseurl'] = _exchange_params['ws_baseurl']
         tm_config['weight_table_name'] = WeightManager.get_table_name()
         TradeManager(tm_config)
         await TradeManager.run_async()
