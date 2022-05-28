@@ -313,8 +313,8 @@ def get_colorpalette(colorpalette, n_colors):
 # パフォーマンス表示とmlflow記録用の関数
 def visualize_performance_plotly(df_close, df_target_weight, df_real_weight, df_usdt_value, df_position, df_fee, render_from, render_to, time_resolution, record_metric, params):
     # Jupyter notebookで表示したい場合はこちらを使う
-    _fig = make_subplots(rows = 3, cols = 1,
-                         subplot_titles = ('未実現損益 + 証拠金', 'クローズ価格', '実際ポートフォリオウェイト'),
+    _fig = make_subplots(rows = 2, cols = 2,
+                         subplot_titles = ('未実現損益 + 証拠金', '実際ウェイト', 'クローズ価格', '目標ウェイト'),
                          shared_xaxes = True,
                          vertical_spacing=0.04)
     
@@ -334,7 +334,7 @@ def visualize_performance_plotly(df_close, df_target_weight, df_real_weight, df_
     _series_df_target_weight_active_columns = df_target_weight.fillna(0).astype(bool).sum(axis=0)
     _series_df_target_weight_active_columns = _series_df_target_weight_active_columns[_series_df_target_weight_active_columns != 0]
     
-    _columns = set(_series_df_real_weight_active_columns.index.values) | set(_series_df_target_weight_active_columns.index.values)
+    _columns = sorted(set(_series_df_real_weight_active_columns.index.values) | set(_series_df_target_weight_active_columns.index.values))
     
     # カラーパレットの取得
     _colors = get_colorpalette('hls', len(_columns))
@@ -366,7 +366,7 @@ def visualize_performance_plotly(df_close, df_target_weight, df_real_weight, df_
 
     # リアルポートフォリオウェイトの描画
     _df_real_weight_render = _df_real_weight.loc[(_df_real_weight.index.values.astype(np.int64) // 10**9) % (time_resolution * 60) == 0, list(_columns)]
-    _df_real_weight_render_negative, _df_real_weight_render_positive = _df_real_weight_render.clip(upper=0), _df_real_weight_render.clip(lower=0)
+    _df_real_weight_render_negative, _df_real_weight_render_positive = _df_real_weight_render.clip(upper=-0.000001), _df_real_weight_render.clip(lower=0.000001)
     for i, _col in enumerate(_columns):
         if _col in _df_real_weight_render_negative:
             if _col not in _legend_list:
@@ -374,7 +374,7 @@ def visualize_performance_plotly(df_close, df_target_weight, df_real_weight, df_
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_real_weight_render_negative.index, y = _df_real_weight_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 3, col = 1)
+            _fig.add_trace(go.Scatter(x = _df_real_weight_render_negative.index, y = _df_real_weight_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
 
     for i, _col in enumerate(_columns):
         if _col in _df_real_weight_render_positive:
@@ -383,9 +383,30 @@ def visualize_performance_plotly(df_close, df_target_weight, df_real_weight, df_
                 _show_legend = True
             else:
                 _show_legend = False
-            _fig.add_trace(go.Scatter(x = _df_real_weight_render_positive.index, y = _df_real_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 3, col = 1)
+            _fig.add_trace(go.Scatter(x = _df_real_weight_render_positive.index, y = _df_real_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 1, col = 2)
         
-    _fig.update_layout(width = 700, height = 1000)
+    # 目標ウェイトの描画
+    _df_target_weight_render = _df_target_weight.loc[(_df_target_weight.index.values.astype(np.int64) // 10**9) % (time_resolution * 60) == 0, list(_columns)]
+    _df_target_weight_render_negative, _df_target_weight_render_positive = _df_target_weight_render.clip(upper=0), _df_target_weight_render.clip(lower=0)
+    for i, _col in enumerate(_columns):
+        if _col in _df_target_weight_render_negative:
+            if _col not in _legend_list:
+                _legend_list.append(_col)
+                _show_legend = True
+            else:
+                _show_legend = False
+            _fig.add_trace(go.Scatter(x = _df_target_weight_render_negative.index, y = _df_target_weight_render_negative[_col], name = _col, stackgroup = 'negative', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 2)
+
+    for i, _col in enumerate(_columns):
+        if _col in _df_target_weight_render_positive:
+            if _col not in _legend_list:
+                _legend_list.append(_col)
+                _show_legend = True
+            else:
+                _show_legend = False
+            _fig.add_trace(go.Scatter(x = _df_target_weight_render_positive.index, y = _df_target_weight_render_positive[_col], name = _col, stackgroup = 'positive', mode = 'none', fillcolor = _colors[i], showlegend = _show_legend), row = 2, col = 2)
+
+    _fig.update_layout(width = 1200, height = 800, uirevision='0')
 
     mlflow.log_figure(_fig, f'portofolio_{render_from}_to_{render_to}.html')
     
@@ -447,10 +468,14 @@ def target_function(params):
     _df_real_weight, _df_usdt_value, _df_fee, _df_position = simulate_trades(_df_close, _df_mark_close, _df_target_weight, params)
     
     # Plotlyを利用した可視化
-    visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        '2022-05-08 00:00:00+00', params['backtest_to'], 10, True, params)
-    _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
-                                                                                        params['backtest_from'], '2022-05-08 00:00:00+00', 10, False, params)
+    if params['debug'] == True:
+        _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
+                                                                                            params['backtest_from'], params['backtest_to'], 5, True, params)    
+    else:
+        visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
+                                     '2022-05-08 00:00:00+00', params['backtest_to'], 10, True, params)
+        _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = visualize_performance_plotly(_df_close, _df_target_weight, _df_real_weight, _df_usdt_value, _df_position, _df_fee,
+                                                                                            params['backtest_from'], '2022-05-08 00:00:00+00', 10, False, params)
     
     gc.collect()
     mlflow.end_run()
@@ -465,10 +490,10 @@ def objective(trial):
     
     if _params['debug'] == False:
 #        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
-#        _params['rebalance_time_sec'] = _params['rebalance_interval_hour'] * 60 * 60 / 8 # リバランス間隔の1/4の時間でウェイト調整を終える
-        _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
-        _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
-        _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
+        _params['rebalance_time_sec'] = trial.suggest_int('rebalance_interval_hour', 1, 24, 1) * 60 * 60 # リバランス間隔の1/4の時間でウェイト調整を終える
+#        _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
+#        _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
+#        _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
 #        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
 #        _params['components_select_period'] = _params['weight_calc_period']
             
@@ -485,7 +510,7 @@ args = parser.parse_args()
 
 # 実験のパラメータ
 params_base = {
-    'experiment_name': 'bugfix5_int_24h_cost_0.01_l2reg_0.01-0.1_riska_0.1_4',
+    'experiment_name': 'interval=24h_duration_1h_to_24h_cost=0.01_l2reg=0.03_objective=0.1_to_4.0',
     'backtest_from': '2022-04-08 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
     'backtest_to': '2023-01-01 00:00:00+00',
     'efficientfrontier_type': 'EfficientMeanVariance',
@@ -524,17 +549,19 @@ mlflow.set_tracking_uri('http://mlflow:8890')
 params = params_base.copy()
 
 if params['debug'] == True:
-    params['backtest_from'] = '2022-04-03 00:00:00+00'
+    params['backtest_from'] = '2022-05-26 00:00:00+00'
     params['backtest_to'] = '2023-01-01 00:00:00+00'
-    params['rebalance_interval_hour'] = 8
+    params['rebalance_interval_hour'] = 24
     params['rebalance_wait_sec'] = 5*60
     params['rebalance_time_sec'] = 2*60*60
     params['weight_calc_period'] = 2
-    params['num_components'] = 16
+    params['num_components'] = 20
     params['components_swap_interval'] = 1
     params['components_select_period'] = 2        
-    params['initial_usdt_value'] = 10000
+    params['initial_usdt_value'] = 2000
     params['execution_cost'] = 0.006
+    params['objective_param'] = 2.6438726001240873
+    params['objective_param'] = 0.010195292131229735
     
 # AsyncManagerの初期化
 _richhandler = RichHandler(rich_tracebacks = True)
