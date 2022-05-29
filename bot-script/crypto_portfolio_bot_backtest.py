@@ -189,12 +189,7 @@ def calc_target_weight(df_close, df_target_weight, df_dollar_volume_sma, params)
         elif _target_weights.abs().sum() != 1:
             # 構成銘柄が複数ある場合は、通常の正規化を行う
             df_target_weight.iloc[i, :] = _target_weights /_target_weights.abs().sum()
-        
-        # 執行を待っている間はターゲットウェイトを維持するよう書き込む
-        #df_target_weight.iloc[i:i + ROWS_WAIT_FOR_EXECUTION - 1, :] = df_target_weight.iloc[i, :]
-        _target_weights = df_target_weight.iloc[i]
-        print(df_target_weight.index[i], _target_weights[_target_weights != 0])
-    
+            
     # リバランスタイミングから次のリバランスタイミングまでを、直前の目標ウェイトで埋める
     df_target_weight.ffill(inplace = True)    
     
