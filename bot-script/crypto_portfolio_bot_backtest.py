@@ -510,7 +510,7 @@ params_base = {
     'efficientfrontier_type': 'EfficientMeanVariance',
     'objective_type': 'max_quadratic_utility',
     'l2_reg_gamma': 0.03,
-    'execution_cost': 0.01,                 # トレード手数料
+    'execution_cost': 0.002,                 # トレード手数料
     'debug': args.debug,                     # 規定値のパラメータを使ったデバッグを行うフラグ
     'debug_sinusdt': args.debugsinusdt,      # 価格系列としてsinusdt / sin2usdtを利用するフラグ
     'exchange_name': 'binanceusdm-mainnet', # DB読み込み時に利用される取引所名
@@ -553,7 +553,6 @@ if params['debug'] == True:
     params['components_swap_interval'] = 1
     params['components_select_period'] = 2        
     params['initial_usdt_value'] = 2000
-    params['execution_cost'] = 0.006
     params['objective_param'] = 2.6438726001240873
     params['l2_reg_gamma'] = 0.010195292131229735
     
