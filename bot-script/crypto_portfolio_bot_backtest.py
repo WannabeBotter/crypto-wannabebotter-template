@@ -227,8 +227,8 @@ def simulate_trades(df_close, df_mark_close, df_target_weight, params):
     df_position.iloc[0, df_position.columns.get_loc('USDTUSDT')] = params['initial_usdt_value']
     df_usdt_value.iloc[0, df_position.columns.get_loc('USDTUSDT')] = params['initial_usdt_value']
     
-    # t+1のオープン価格を内部で利用しているので、最終行はシミュレーションに含めない
-    for i in tqdm(range(1, df_target_weight.shape[0] - 1, 1)):
+    # シミュレーションを実施
+    for i in tqdm(range(1, df_target_weight.shape[0], 1)):
         np_real_weight, np_usdt_value, np_fee, np_position, = simulate_trades_numba(i, df_close.values, df_mark_close.values, df_target_weight.values, df_real_weight.values, df_usdt_value.values, df_position.values, df_fee.values, ROWS_REBALANCE, ROWS_WAIT_FOR_EXECUTION, ROWS_EXECUTION, df_close.columns.get_loc('USDTUSDT'), params['execution_cost'])
         df_real_weight.iloc[i, :] = np_real_weight
         df_usdt_value.iloc[i, :] = np_usdt_value
@@ -561,7 +561,7 @@ if params['debug'] == True:
     params['initial_usdt_value'] = 2000
     params['execution_cost'] = 0.006
     params['objective_param'] = 2.6438726001240873
-    params['objective_param'] = 0.010195292131229735
+    params['l2_reg_gamma'] = 0.010195292131229735
     
 # AsyncManagerの初期化
 _richhandler = RichHandler(rich_tracebacks = True)
