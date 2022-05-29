@@ -483,13 +483,13 @@ def objective(trial):
     _params = params.copy()
     
     if _params['debug'] == False:
-#        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
+        _params['rebalance_interval_hour'] = trial.suggest_int('rebalance_interval_hour', 8, 24, 8) # リバランス間隔の最小値を1時間にすると、シミュレーション時間が長くなりすぎる        
         _params['rebalance_time_sec'] = trial.suggest_int('rebalance_interval_hour', 1, 24, 1) * 60 * 60 # リバランス間隔の1/4の時間でウェイト調整を終える
-#        _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
-#        _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
-#        _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
-#        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
-#        _params['components_select_period'] = _params['weight_calc_period']
+        _params['objective_param'] = trial.suggest_uniform('risk_aversion', 0.1, 4.0)
+        _params['l2_reg_gamma'] = trial.suggest_uniform('l2_reg_gamma', 0.01, 0.1)
+        _params['num_components'] = trial.suggest_int('num_components', 4, 20, 2)
+        _params['weight_calc_period'] = trial.suggest_int('weight_calc_period', 2, 8, 2)
+        _params['components_select_period'] = _params['weight_calc_period']
             
     _final_usdt_value, _max_usdt_value, _dd_pct, _sharpe = target_function(_params)
     return _max_usdt_value, _sharpe
@@ -504,7 +504,6 @@ args = parser.parse_args()
 
 # 実験のパラメータ
 params_base = {
-    'experiment_name': 'interval=24h_duration_1h_to_24h_cost=0.01_l2reg=0.03_objective=0.1_to_4.0',
     'backtest_from': '2022-04-08 00:00:00+00', # Binance testnetは2021年8月以前の値動きが激しすぎるので除外
     'backtest_to': '2023-01-01 00:00:00+00',
     'efficientfrontier_type': 'EfficientMeanVariance',
@@ -530,7 +529,7 @@ params_base = {
 }
 
 # 実験名を設定
-experiment_name = params_base['exchange_name'] + '_' + params_base['experiment_name']
+experiment_name = params_base['exchange_name'] + '_' 'after_bugfix_#2'
 
 if params_base['debug'] == True:
     experiment_name += '_debug'
